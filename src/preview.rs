@@ -118,7 +118,7 @@ impl CachedPreview {
             }
         };
         rows.into_iter()
-            .map(|line| ansi_to_line(&truncate_ansi(line, usize::from(width))))
+            .map(|line| ansi_to_line(line, usize::from(width)))
             .collect()
     }
 }
@@ -245,46 +245,15 @@ fn pane_ids(session: &Session) -> impl Iterator<Item = &str> {
         .flat_map(|window| window.panes.iter().map(|pane| pane.id.as_str()))
 }
 
-fn truncate_ansi(value: &str, max_width: usize) -> String {
-    if max_width == 0 {
-        return String::new();
-    }
-
-    let mut output = String::new();
-    let mut visible_width = 0;
-    let mut chars = value.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-            output.push(ch);
-            output.push(chars.next().unwrap());
-            for next in chars.by_ref() {
-                output.push(next);
-                if ('@'..='~').contains(&next) {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if visible_width == max_width {
-            break;
-        }
-
-        output.push(ch);
-        visible_width += 1;
-    }
-
-    output
-}
-
-fn ansi_to_line(value: &str) -> Line<'static> {
+fn ansi_to_line(value: &str, mut remaining: usize) -> Line<'static> {
     let mut spans = Vec::new();
     let mut buffer = String::new();
     let mut style = Style::default();
     let mut chars = value.chars().peekable();
 
-    while let Some(ch) = chars.next() {
+    while remaining > 0
+        && let Some(ch) = chars.next()
+    {
         if ch == '\u{1b}' && chars.peek() == Some(&'[') {
             chars.next();
             let mut sequence = String::new();
@@ -306,6 +275,7 @@ fn ansi_to_line(value: &str) -> Line<'static> {
             }
         } else {
             buffer.push(ch);
+            remaining -= 1;
         }
     }
 
@@ -413,7 +383,7 @@ mod tests {
 
     #[test]
     fn ansi_foreground_colors_become_styled_spans() {
-        let line = ansi_to_line("plain \u{1b}[31mred\u{1b}[0m done");
+        let line = ansi_to_line("plain \u{1b}[31mred\u{1b}[0m done", 80);
 
         assert_eq!(line.spans.len(), 3);
         assert_eq!(line.spans[0].content, "plain ");
@@ -426,9 +396,15 @@ mod tests {
 
     #[test]
     fn ansi_truncation_counts_only_visible_characters() {
-        let truncated = truncate_ansi("\u{1b}[31mred\u{1b}[0m plain", 5);
-
-        assert_eq!(truncated, "\u{1b}[31mred\u{1b}[0m p");
+        let line = ansi_to_line("\u{1b}[31mred\u{1b}[0m plain", 5);
+        assert_eq!(
+            line.spans,
+            [
+                Span::styled("red", Style::default().fg(Color::Red)),
+                Span::raw(" p"),
+            ]
+        );
+        assert!(ansi_to_line("\u{1b}[31mred", 0).spans.is_empty());
     }
 
     fn sessions() -> Vec<Session> {
