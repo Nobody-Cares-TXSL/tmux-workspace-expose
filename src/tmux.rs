@@ -228,24 +228,38 @@ fn attach_workspace_rows(sessions: &mut [Session], rows: &[WorkspaceRow]) {
 }
 
 pub fn list_workspace_sessions() -> Result<Vec<Session>> {
-    let output = run_tmux(
-        &[
-            "list-sessions",
-            "-F",
-            SESSION_FORMAT,
-            ";",
-            "display-message",
-            "-p",
-            WORKSPACE_BOUNDARY.trim_end_matches('\n'),
-            ";",
-            "list-panes",
-            "-a",
-            "-F",
-            WORKSPACE_PANE_FORMAT,
-        ],
-        "tmux workspace query failed",
-    )?;
-    parse_workspace_snapshot(&output)
+    workspace_snapshot(false).map(|(sessions, _)| sessions)
+}
+
+pub fn workspace_snapshot(read_current: bool) -> Result<(Vec<Session>, Option<String>)> {
+    let mut args = Vec::new();
+    if read_current {
+        args.extend(["display-message", "-p", "#{session_id}", ";"]);
+    }
+    args.extend([
+        "list-sessions",
+        "-F",
+        SESSION_FORMAT,
+        ";",
+        "display-message",
+        "-p",
+        WORKSPACE_BOUNDARY.trim_end_matches('\n'),
+        ";",
+        "list-panes",
+        "-a",
+        "-F",
+        WORKSPACE_PANE_FORMAT,
+    ]);
+    let output = run_tmux(&args, "tmux workspace query failed")?;
+    let (current, body) = if read_current {
+        let (current, body) = output
+            .split_once('\n')
+            .context("missing current session in tmux snapshot")?;
+        ((!current.is_empty()).then(|| current.to_owned()), body)
+    } else {
+        (None, output.as_str())
+    };
+    Ok((parse_workspace_snapshot(body)?, current))
 }
 
 const WORKSPACE_BOUNDARY: &str = "\u{e000}tmux-expose-panes\u{e000}\n";

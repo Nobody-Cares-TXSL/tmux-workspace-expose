@@ -153,19 +153,27 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let mut previews = PreviewCache::new(env::var("TMUX_PANE").ok());
-    let configured = configured_appearance(&cli);
+    let client = env::var("TMUX_EXPOSE_CLIENT").ok();
+    let mut current_session_id = env::var("TMUX_EXPOSE_SESSION").ok();
+    let (workspace, configured, grid_settings) = std::thread::scope(|scope| {
+        let workspace = scope.spawn(|| tmux::workspace_snapshot(current_session_id.is_none()));
+        let configured = configured_appearance(&cli);
+        let grid_settings = Settings::load();
+        (
+            workspace.join().expect("workspace query thread"),
+            configured,
+            grid_settings,
+        )
+    });
     let (appearance, config_error) = match Appearance::load(configured.clone()) {
         Ok(appearance) => (appearance, None),
         Err(error) => (configured, Some(error.to_string())),
     };
 
-    let client = env::var("TMUX_EXPOSE_CLIENT").ok();
-    let current_session_id = env::var("TMUX_EXPOSE_SESSION")
-        .ok()
-        .or_else(|| tmux::current_session_id().unwrap_or(None));
     let agent_sort = appearance.0[AGENT_SORT] == "on";
-    let mut app = match tmux::list_workspace_sessions() {
-        Ok(mut sessions) => {
+    let mut app = match workspace {
+        Ok((mut sessions, current)) => {
+            current_session_id = current_session_id.or(current);
             let current_session_name =
                 order_sessions(&mut sessions, current_session_id.as_deref(), agent_sort);
             let mut app = App::new(sessions, current_session_name);
@@ -182,7 +190,7 @@ fn main() -> Result<()> {
     };
     app.appearance = appearance;
     app.grid_error = config_error;
-    match Settings::load() {
+    match grid_settings {
         Ok(settings) => app.grid = settings,
         Err(error) => app.grid_error = Some(error.to_string()),
     }
