@@ -107,11 +107,14 @@ impl Settings {
     }
 
     pub fn save(self) -> io::Result<()> {
-        let path = crate::config::path("grid.conf")?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(path, format!("{}\n", self.encode()))
+        crate::config::save(&[("grid.conf", self.file_data()?)], || Ok(()), |()| Ok(()))
+            .map_err(io::Error::other)
+    }
+
+    pub(crate) fn file_data(self) -> io::Result<String> {
+        Self::from_fields(self.fields())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid grid settings"))?;
+        Ok(format!("{}\n", self.encode()))
     }
 }
 

@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::process::{Command, Output};
+use std::io::Write;
+use std::process::{Command, Output, Stdio};
 
 use anyhow::{Context, Result, anyhow};
 
@@ -505,6 +506,26 @@ pub fn run_tmux(args: &[&str], message: &str) -> Result<String> {
         return Err(tmux_error(message, &output.stderr));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub(crate) fn source_bindings(commands: &str) -> Result<()> {
+    let message = "Could not restore tmux binding";
+    let mut child = Command::new("tmux")
+        .args(["source-file", "-"])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context(message)?;
+    let written = child
+        .stdin
+        .take()
+        .expect("piped tmux stdin")
+        .write_all(commands.as_bytes());
+    let output = child.wait_with_output().context(message)?;
+    if !output.status.success() {
+        return Err(tmux_error(message, &output.stderr));
+    }
+    written.context(message)
 }
 
 fn tmux_error(message: &str, stderr: &[u8]) -> anyhow::Error {

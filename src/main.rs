@@ -443,20 +443,7 @@ fn save_settings(app: &mut App) -> Result<()> {
         .as_ref()
         .context(lang.text("设置已关闭", "Settings are closed"))?
         .draft;
-    let changed_appearance = *appearance != app.appearance;
-    let changed_grid = grid != app.grid;
-    if changed_grid || !changed_appearance {
-        grid.save()
-            .context(lang.text("保存网格失败", "Could not save grid settings"))?;
-    }
-    if changed_appearance && let Err(error) = appearance.save(&app.appearance) {
-        if changed_grid {
-            app.grid
-                .save()
-                .context(lang.text("恢复网格设置失败", "Could not restore grid settings"))?;
-        }
-        return Err(error);
-    }
+    appearance.save_settings(&app.appearance, grid, app.grid)?;
     app.grid = grid;
     app.appearance = appearance.clone();
     app.close_settings();

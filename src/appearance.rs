@@ -1,9 +1,12 @@
-use std::{env, fs, io, process::Command};
+use std::{env, ffi::OsString, fs, io, process::Command};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use ratatui::style::Color;
 
-use crate::tmux::{run_tmux, tmux_output};
+use crate::{
+    grid::Settings,
+    tmux::{run_tmux, tmux_output},
+};
 
 #[derive(Clone, Copy)]
 pub struct Field {
@@ -430,32 +433,54 @@ impl Appearance {
     }
 
     pub fn save(&self, previous: &Self) -> Result<()> {
+        self.persist(previous, None, true)
+    }
+
+    #[doc(hidden)]
+    pub fn save_settings(&self, previous: &Self, grid: Settings, old_grid: Settings) -> Result<()> {
+        let changed = self != previous;
+        self.persist(
+            previous,
+            (grid != old_grid || !changed).then_some(grid),
+            changed,
+        )
+    }
+
+    fn persist(
+        &self,
+        previous: &Self,
+        grid: Option<Settings>,
+        write_appearance: bool,
+    ) -> Result<()> {
         let lang = previous.language();
-        self.validate_in(lang)?;
-        let path = crate::config::path("appearance.conf")?;
-        let prior = fs::read(&path).ok();
-        let plugin = if self.0[..VIM_KEYS] != previous.0[..VIM_KEYS] {
-            env::var_os("TMUX_EXPOSE_PLUGIN_PATH")
-        } else {
-            None
-        };
-        let changed_key = self.0[..=KEY_TABLE] != previous.0[..=KEY_TABLE];
-        if changed_key
-            && plugin.is_some()
-            && binding(&self.0[KEY_TABLE], &self.0[LAUNCH_KEY])?.is_some_and(|line| !ours(&line))
-        {
-            bail!(
-                "{}",
-                lang.text(
-                    "这个启动键已被 tmux 占用",
-                    "This launch key is already bound in tmux."
-                )
-            );
+        if write_appearance {
+            self.validate_in(lang)?;
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+        let mut files = Vec::new();
+        if let Some(grid) = grid {
+            files.push(("grid.conf", grid.file_data()?));
         }
-        let data: String = FIELDS
+        if write_appearance {
+            files.push(("appearance.conf", self.file_data()));
+        }
+        crate::config::save(
+            &files,
+            || {
+                if write_appearance {
+                    self.prepare_bindings(previous)
+                } else {
+                    Ok(None)
+                }
+            },
+            |update| match update {
+                Some(update) => update.apply(lang),
+                None => Ok(()),
+            },
+        )
+    }
+
+    fn file_data(&self) -> String {
+        FIELDS
             .iter()
             .zip(&self.0)
             .enumerate()
@@ -467,46 +492,107 @@ impl Appearance {
                 };
                 format!("{}={value}\n", field.option)
             })
-            .collect();
-        fs::write(&path, data)?;
-        if let Some(plugin) = plugin {
-            let output = env::current_exe().and_then(|binary| {
-                Command::new("bash")
-                    .env("TMUX_EXPOSE_POPUP_HELPER", binary)
-                    .arg(&plugin)
-                    .output()
-            });
-            if !output.as_ref().is_ok_and(|output| output.status.success()) {
-                match prior {
-                    Some(data) => fs::write(&path, data)?,
-                    None => fs::remove_file(&path)?,
+            .collect()
+    }
+
+    fn prepare_bindings(&self, previous: &Self) -> Result<Option<BindingUpdate>> {
+        let Some(plugin) = env::var_os("TMUX_EXPOSE_PLUGIN_PATH") else {
+            return Ok(None);
+        };
+        let mut current = previous.clone();
+        if let Some(saved) = read_saved()? {
+            for (field, value) in current.0.iter_mut().zip(saved).take(VIM_KEYS) {
+                if let Some(value) = value {
+                    *field = value;
                 }
-                let detail = output
-                    .map(|out| String::from_utf8_lossy(&out.stderr).into_owned())
-                    .unwrap_or_else(|error| error.to_string());
-                bail!(
-                    "{}: {}",
-                    lang.text("更新 tmux 绑定失败", "Could not reload tmux bindings"),
-                    detail.trim()
-                );
             }
-            if changed_key
-                && binding(&previous.0[KEY_TABLE], &previous.0[LAUNCH_KEY])?
-                    .is_some_and(|line| ours(&line))
-            {
+        }
+        if self.0[..VIM_KEYS] == current.0[..VIM_KEYS] {
+            return Ok(None);
+        }
+        let new = (&*self.0[KEY_TABLE], &*self.0[LAUNCH_KEY]);
+        let old = (&*current.0[KEY_TABLE], &*current.0[LAUNCH_KEY]);
+        let new_binding = binding(new.0, new.1)?;
+        if old != new && new_binding.as_deref().is_some_and(|line| !ours(line)) {
+            bail!(
+                "{}",
+                previous.language().text(
+                    "这个启动键已被 tmux 占用",
+                    "This launch key is already bound in tmux."
+                )
+            );
+        }
+        let mut snapshots = vec![(new, new_binding)];
+        for target in [("root", "S-F12"), ("root", "M-w"), old] {
+            if !snapshots.iter().any(|(key, _)| *key == target) {
+                snapshots.push((target, binding(target.0, target.1)?));
+            }
+        }
+        let remove = (old != new
+            && snapshots
+                .iter()
+                .any(|(key, value)| *key == old && value.as_deref().is_some_and(ours)))
+        .then_some(old);
+        Ok(Some(BindingUpdate {
+            plugin,
+            snapshots: snapshots
+                .into_iter()
+                .map(|((table, key), line)| ((table.to_owned(), key.to_owned()), line))
+                .collect(),
+            remove: remove.map(|(table, key)| (table.to_owned(), key.to_owned())),
+        }))
+    }
+}
+
+type BindingKey = (String, String);
+
+struct BindingUpdate {
+    plugin: OsString,
+    snapshots: Vec<(BindingKey, Option<String>)>,
+    remove: Option<BindingKey>,
+}
+
+impl BindingUpdate {
+    fn apply(self, lang: Language) -> Result<()> {
+        let binary = env::current_exe()?;
+        let result = (|| {
+            let output = Command::new("bash")
+                .env("TMUX_EXPOSE_POPUP_HELPER", binary)
+                .arg(&self.plugin)
+                .output()?;
+            anyhow::ensure!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+            if let Some((table, key)) = self.remove {
                 run_tmux(
-                    &[
-                        "unbind-key",
-                        "-T",
-                        &previous.0[KEY_TABLE],
-                        &previous.0[LAUNCH_KEY],
-                    ],
+                    &["unbind-key", "-T", &table, &key],
                     lang.text(
                         "移除旧启动键失败",
                         "Could not remove the previous launch key",
                     ),
                 )?;
             }
+            Ok(())
+        })();
+        if let Err(mut error) = result
+            .with_context(|| lang.text("更新 tmux 绑定失败", "Could not reload tmux bindings"))
+        {
+            for ((table, key), line) in self.snapshots {
+                let restore = match line {
+                    Some(line) => crate::tmux::source_bindings(&line),
+                    None => run_tmux(
+                        &["unbind-key", "-q", "-T", &table, &key],
+                        "Could not remove tmux binding",
+                    )
+                    .map(|_| ()),
+                };
+                if let Err(restore) = restore {
+                    error = anyhow::anyhow!("{error:#}\nRestore {table} {key}: {restore:#}");
+                }
+            }
+            return Err(error);
         }
         Ok(())
     }
@@ -536,14 +622,17 @@ fn read_saved() -> Result<Option<[Option<String>; FIELDS.len()]>> {
 }
 
 fn binding(table: &str, key: &str) -> Result<Option<String>> {
-    let output = tmux_output(
-        &["list-keys", "-T", table, key],
-        "Could not look up tmux binding",
-    )?;
-    Ok(output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).into_owned()))
+    let message = "Could not look up tmux binding";
+    let output = tmux_output(&["list-keys", "-T", table, key], message)?;
+    if output.status.success() {
+        return Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.starts_with("unknown key:") || stderr.trim() == format!("table {table} doesn't exist")
+    {
+        return Ok(None);
+    }
+    bail!("{message}: {}", stderr.trim())
 }
 
 fn ours(line: &str) -> bool {
