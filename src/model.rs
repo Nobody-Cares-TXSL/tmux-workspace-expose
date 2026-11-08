@@ -204,7 +204,7 @@ impl App {
     }
 
     pub fn selected_session(&self) -> Option<&Session> {
-        self.visible_sessions().get(self.selected_index).copied()
+        self.visible_session_iter().nth(self.selected_index)
     }
 
     pub fn selected_window(&self) -> Option<&WindowPreview> {
@@ -335,18 +335,28 @@ impl App {
     }
 
     pub fn visible_sessions(&self) -> Vec<&Session> {
-        match self.search_query.as_deref() {
-            Some(query) => self
-                .sessions
-                .iter()
-                .filter(|session| fuzzy_matches(&session.name, query))
-                .collect(),
-            None => self.sessions.iter().collect(),
-        }
+        self.visible_session_iter().collect()
+    }
+
+    fn visible_session_iter(&self) -> impl Iterator<Item = &Session> {
+        let query = self
+            .search_query
+            .as_deref()
+            .filter(|query| !query.is_empty())
+            .map(str::to_lowercase);
+        self.sessions.iter().filter(move |session| {
+            query
+                .as_deref()
+                .is_none_or(|query| fuzzy_matches(&session.name, query))
+        })
     }
 
     pub fn visible_session_count(&self) -> usize {
-        self.visible_sessions().len()
+        if self.search_query.as_deref().is_none_or(str::is_empty) {
+            self.sessions.len()
+        } else {
+            self.visible_session_iter().count()
+        }
     }
 
     pub fn start_search(&mut self) {
@@ -464,8 +474,7 @@ impl App {
         self.search_query = (*has_query == "1").then(|| query.to_owned());
         self.editing_search = self.search_query.is_some() && *editing == "1";
         let index = self
-            .visible_sessions()
-            .iter()
+            .visible_session_iter()
             .position(|entry| entry.id == *session);
         self.selected_index = index.unwrap_or_else(|| {
             self.selected_index
@@ -517,8 +526,7 @@ impl App {
         self.selected_index = selected_id
             .as_ref()
             .and_then(|id| {
-                self.visible_sessions()
-                    .into_iter()
+                self.visible_session_iter()
                     .position(|session| &session.id == id)
             })
             .unwrap_or_else(|| self.selected_index.min(self.visible_session_count() - 1));
@@ -594,11 +602,6 @@ pub fn sort_sessions_by_agent_status(sessions: &mut [Session]) {
 }
 
 fn fuzzy_matches(name: &str, query: &str) -> bool {
-    let query = query.to_lowercase();
-    if query.is_empty() {
-        return true;
-    }
-
     let name = name.to_lowercase();
     let mut name_chars = name.chars();
     query
