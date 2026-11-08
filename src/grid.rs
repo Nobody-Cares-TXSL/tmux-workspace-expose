@@ -224,6 +224,19 @@ pub struct Viewport {
     count: usize,
 }
 
+pub(crate) fn grid_cell(area: Rect, index: usize, columns: usize, rows: usize) -> Rect {
+    let col = index % columns;
+    let row = index / columns;
+    let x = |i| (i * usize::from(area.width) / columns) as u16;
+    let y = |i| (i * usize::from(area.height) / rows) as u16;
+    Rect::new(
+        area.x + x(col),
+        area.y + y(row),
+        x(col + 1) - x(col),
+        y(row + 1) - y(row),
+    )
+}
+
 impl Viewport {
     pub fn new(
         area: Rect,
@@ -262,28 +275,20 @@ impl Viewport {
         self.range().enumerate().map(move |(slot, index)| {
             let col = slot % self.columns;
             let row = slot / self.columns;
-            let x = |edge| (edge * usize::from(area.width) / self.columns) as u16;
-            let y = |edge| (edge * usize::from(area.height) / self.rows) as u16;
-            let width = x(col + 1) - x(col);
-            let height = y(row + 1) - y(row);
+            let cell = grid_cell(area, slot, self.columns, self.rows);
             let gap_x = if col + 1 < self.columns {
-                gap.min(width.saturating_sub(4))
+                gap.min(cell.width.saturating_sub(4))
             } else {
                 0
             };
             let gap_y = if row + 1 < self.rows {
-                gap.min(height.saturating_sub(4))
+                gap.min(cell.height.saturating_sub(4))
             } else {
                 0
             };
             (
                 index,
-                Rect::new(
-                    area.x + x(col),
-                    area.y + y(row),
-                    width - gap_x,
-                    height - gap_y,
-                ),
+                Rect::new(cell.x, cell.y, cell.width - gap_x, cell.height - gap_y),
             )
         })
     }

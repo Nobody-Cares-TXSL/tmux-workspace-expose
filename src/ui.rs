@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     appearance::{FIELDS, LANGUAGE, Language, POPUP_BACKGROUND, POPUP_BORDER, Page, parse_color},
-    grid::{FIELD_NAMES, Limits, Settings, Viewport},
+    grid::{FIELD_NAMES, Limits, Settings, Viewport, grid_cell},
     model::{AgentStatus, App, Focus, PanePreview, Session, WindowPreview, WorkspaceDialog},
     preview::{PreviewCache, PreviewView},
 };
@@ -722,19 +722,6 @@ fn window_borders(area: Rect) -> Borders {
     } else {
         Borders::NONE
     }
-}
-
-fn grid_cell(area: Rect, index: usize, columns: usize, rows: usize) -> Rect {
-    let col = index % columns;
-    let row = index / columns;
-    let x = |i| (i * usize::from(area.width) / columns) as u16;
-    let y = |i| (i * usize::from(area.height) / rows) as u16;
-    Rect::new(
-        area.x + x(col),
-        area.y + y(row),
-        x(col + 1) - x(col),
-        y(row + 1) - y(row),
-    )
 }
 
 fn pane_layout(
