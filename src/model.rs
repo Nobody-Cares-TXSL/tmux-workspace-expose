@@ -241,17 +241,16 @@ impl App {
     }
 
     pub fn cycle_window(&mut self, backward: bool) {
-        let Some(current) = self.selected_window() else {
-            return;
-        };
-        let Some(session) = self.selected_session() else {
+        let Some(session) = self
+            .selected_session()
+            .filter(|session| !session.windows.is_empty())
+        else {
             return;
         };
         let windows = &session.windows;
-        if let Some(index) = windows.iter().position(|window| window.id == current.id) {
-            let step = if backward { windows.len() - 1 } else { 1 };
-            self.select_window(windows[(index + step) % windows.len()].id.clone());
-        }
+        let index = self.selected_window_index();
+        let step = if backward { windows.len() - 1 } else { 1 };
+        self.select_window(windows[(index + step) % windows.len()].id.clone());
     }
 
     pub fn open_session_detail(&mut self) {
