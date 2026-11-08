@@ -26,38 +26,58 @@
 
 ## 快速开始
 
-需要 Git、Bash、Cargo 和 tmux。本项目在 Linux 的 Alacritty 和 tmux 3.4 上验证过。
-
-```bash
-git clone https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose.git
-cargo install --locked --path ./tmux-workspace-expose
-```
-
-安装后的命令为 `tmux-workspace-expose`。确保 tmux 服务能从 `PATH` 找到它。
+需要 Git、Bash、带 Cargo 的稳定版 Rust 工具链和 tmux。本项目在 Linux 的 Alacritty 和 tmux 3.4 上验证过。
 
 ### 使用 TPM
 
-如果使用 [TPM](https://github.com/tmux-plugins/tpm)，在 tmux 配置中加入以下内容。已有上游插件配置时，替换原来的 `cesarferreira/tmux.expose` 项。
+[TPM](https://github.com/tmux-plugins/tpm) 从 GitHub 拉取源码并加载 tmux 脚本。Cargo 用 TPM 拉取的同一份源码编译并安装 `tmux-workspace-expose` 命令。
+
+在 TPM 初始化之前加入以下配置。已有 `cesarferreira/tmux.expose` 项时，替换原来的条目。
 
 ```tmux
 set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 ```
 
-重新加载 tmux 配置，按前缀键再按大写 `I` 安装插件，然后按 `Alt+e` 打开总览。TPM 会更新插件脚本。要同步更新二进制，请从更新后的项目目录运行 `cargo install --locked --force --path .`，然后再次加载 tmux 配置。插件脚本通过配套的二进制读取已保存的弹窗设置。
+重新加载 tmux 配置。在 tmux 内按前缀键，再按大写 `I` 下载插件。下载完成后运行：
 
-### 从旧版二开插件升级
+```bash
+cargo install --locked --path "$HOME/.tmux/plugins/tmux-workspace-expose" &&
+  tmux source-file "$HOME/.tmux.conf"
+```
 
-安装新命令，将 `@tmux-expose-command` 和 Agent Hook 里引用的 `tmux-expose` 改为 `tmux-workspace-expose`，然后更新 TPM 插件并重新加载 tmux 配置。`~/.config/tmux-expose` 或 `$XDG_CONFIG_HOME/tmux-expose` 中的设置可以继续使用。重启正在运行的 Claude Code 会话以加载新 Hook。
+按 `Alt+e` 打开总览。如果插件目录或 tmux 配置文件的位置不同，替换成实际路径。运行 `tmux show-environment -g TMUX_PLUGIN_MANAGER_PATH` 可查看 TPM 的插件目录。
+
+### 使用 TPM 更新
+
+在 tmux 内按前缀键，再按大写 `U`，选择 `tmux-workspace-expose`。
+
+如果从仍使用 `tmux-expose` 命令的旧版二开插件升级，在最后一次加载配置前，将 `@tmux-expose-command` 和 Agent Hook 里的旧命令路径改为 `tmux-workspace-expose`。已有设置可以继续使用。重启正在运行的 Claude Code 会话以加载新 Hook。
+
+等 TPM 从 GitHub 拉取完成后，用刚更新的插件目录重新编译，再加载 tmux 配置：
+
+```bash
+cargo install --locked --path "$HOME/.tmux/plugins/tmux-workspace-expose" &&
+  tmux source-file "$HOME/.tmux.conf"
+```
+
+TPM 拉取后会先重新加载一次 tmux。最后一次加载会使用重新编译的命令。即使版本号没变，`cargo install --path` 也会从指定目录构建并安装。
 
 ### 手动加载
 
-把下面的示例路径改为实际克隆路径，再加入 tmux 配置。
+手动安装时，自己克隆并编译插件：
 
-```tmux
-run-shell 'bash ~/src/tmux-workspace-expose/tmux.expose.tmux'
+```bash
+git clone https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose.git "$HOME/tmux-workspace-expose" &&
+  cargo install --locked --path "$HOME/tmux-workspace-expose"
 ```
 
-如果 tmux 找不到二进制，在加载插件前指定实际路径。必须写完整路径：该值会被单引号包裹后传给 `run-shell`，开头的 `~` **不会**被展开，弹窗会启动失败。
+把下面这行加入 tmux 配置，按需替换克隆路径，然后重新加载配置。
+
+```tmux
+run-shell 'bash "$HOME/tmux-workspace-expose/tmux.expose.tmux"'
+```
+
+两种安装方式都一样，如果 tmux 服务在 `PATH` 里找不到命令，在加载插件前指定它的绝对路径。
 
 ```tmux
 set -g @tmux-expose-command '/home/you/.cargo/bin/tmux-workspace-expose'
@@ -69,7 +89,7 @@ set -g @tmux-expose-command '/home/you/.cargo/bin/tmux-workspace-expose'
 | --- | --- |
 | `Alt+e` | 打开 Session 总览，默认再次按下关闭弹窗 |
 | `Alt+w` | 直接打开当前 Session 的 Window 总览 |
-| `Shift+F12` | 打开设置。插件只创建这一个绑定；`Ctrl+,` 能否使用取决于终端是否把它发成 `Shift+F12` 序列（见下文） |
+| `Shift+F12` | 打开设置。要用 `Ctrl+,`，需配置终端发送 `Shift+F12` 的转义序列（见下文） |
 | 方向键 | 移动选中项 |
 | 鼠标滚轮 | 逐行滚动 |
 | 鼠标左键 | 选中 Session 或 Window 卡片，按 `Enter` 进入或切换 |
@@ -202,7 +222,7 @@ chars = "\u001B[24;2~"
 }
 ```
 
-`StopFailure` 不能省略。Claude Code 在一轮回复因 API 错误结束时用 `StopFailure` 代替 `Stop`，而你手动中断时 `Stop` 也不会触发。少了这条，这类轮次结束后徽标会一直停在 `working`，因为没有事件去覆盖它。
+保留 `StopFailure` 可在 API 出错时将 Agent 标为需处理。Claude Code 在一轮回复因 API 错误结束时会触发这个事件，代替 `Stop`。[Claude Code Hook 事件](https://code.claude.com/docs/en/hooks#stopfailure)
 
 保存后，在 tmux 中重启 Claude Code 或开启一个新会话，再用 `/hooks` 核对这五个事件。确认在启动 Claude Code 的终端里能运行 `tmux-workspace-expose --version`。如果二进制用了自定义路径，把示例中的 `tmux-workspace-expose` 换成实际可执行文件的绝对路径——优先用绝对路径而不是裸命令名，因为 hook 进程未必继承你交互 shell 的 `PATH`。 [Claude Code hooks 文档](https://code.claude.com/docs/en/hooks)
 

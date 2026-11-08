@@ -26,38 +26,58 @@
 
 ## Quick start
 
-You need Git, Bash, Cargo, and tmux. This project was tested with Alacritty and tmux 3.4 on Linux.
-
-```bash
-git clone https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose.git
-cargo install --locked --path ./tmux-workspace-expose
-```
-
-The installed command is `tmux-workspace-expose`. Make it available on the tmux server's `PATH`.
+You need Git, Bash, a stable Rust toolchain with Cargo, and tmux. This project was tested with Alacritty and tmux 3.4 on Linux.
 
 ### Install with TPM
 
-Add this line to your tmux configuration if you use [TPM](https://github.com/tmux-plugins/tpm). Replace your `cesarferreira/tmux.expose` entry if you already use the original plugin.
+[TPM](https://github.com/tmux-plugins/tpm) clones the source from GitHub and loads the tmux script. Cargo builds and installs the `tmux-workspace-expose` executable from that same checkout.
+
+Add this line before TPM initialization in your tmux configuration. If you have a `cesarferreira/tmux.expose` entry, replace it.
 
 ```tmux
 set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 ```
 
-Reload your tmux configuration, press the prefix key followed by uppercase `I`, then press `Alt+e` to open the overview. TPM updates the plugin script. To update the binary as well, run `cargo install --locked --force --path .` from the updated checkout, then reload your tmux configuration again. The plugin script uses the matching binary to read saved popup settings.
+Reload your tmux configuration. Inside tmux, press the prefix key followed by uppercase `I` to download the plugin. Then run:
 
-### Upgrade from an older fork install
+```bash
+cargo install --locked --path "$HOME/.tmux/plugins/tmux-workspace-expose" &&
+  tmux source-file "$HOME/.tmux.conf"
+```
 
-Install the renamed binary and update any `@tmux-expose-command` override and Agent hooks that still call `tmux-expose`. Then update the TPM checkout and reload tmux. Existing settings in `~/.config/tmux-expose` or `$XDG_CONFIG_HOME/tmux-expose` carry over. Restart active Claude Code sessions to pick up the updated hooks.
+Press `Alt+e` to open the overview. If you use a custom plugin directory or tmux configuration file, substitute your actual paths. Run `tmux show-environment -g TMUX_PLUGIN_MANAGER_PATH` to find TPM's plugin directory.
+
+### Update with TPM
+
+Inside tmux, press the prefix key followed by uppercase `U` and select `tmux-workspace-expose`.
+
+If your fork still uses the old `tmux-expose` command, point any `@tmux-expose-command` override and Agent hooks at `tmux-workspace-expose` before the final reload. Your saved settings carry over. Restart active Claude Code sessions to load the updated hooks.
+
+Once TPM finishes pulling from GitHub, rebuild the executable from the updated TPM checkout and reload tmux:
+
+```bash
+cargo install --locked --path "$HOME/.tmux/plugins/tmux-workspace-expose" &&
+  tmux source-file "$HOME/.tmux.conf"
+```
+
+TPM reloads tmux after pulling. The final reload uses the rebuilt executable. `cargo install --path` rebuilds and installs from the specified directory even when the version number stays the same.
 
 ### Load manually
 
-Add this line to your tmux configuration and substitute your checkout path.
+For a manual installation, clone and build the plugin yourself:
 
-```tmux
-run-shell 'bash ~/src/tmux-workspace-expose/tmux.expose.tmux'
+```bash
+git clone https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose.git "$HOME/tmux-workspace-expose" &&
+  cargo install --locked --path "$HOME/tmux-workspace-expose"
 ```
 
-If tmux cannot find the binary, set its path before loading the plugin. Write the full path: the value is passed to `run-shell` inside single quotes, so a leading `~` is **not** expanded and the popup will fail to start.
+Add this line to your tmux configuration, adjust the checkout path if needed, and reload tmux.
+
+```tmux
+run-shell 'bash "$HOME/tmux-workspace-expose/tmux.expose.tmux"'
+```
+
+For either installation method, if the tmux server cannot find the executable on its `PATH`, set the absolute path before loading the plugin.
 
 ```tmux
 set -g @tmux-expose-command '/home/you/.cargo/bin/tmux-workspace-expose'
@@ -69,7 +89,7 @@ set -g @tmux-expose-command '/home/you/.cargo/bin/tmux-workspace-expose'
 | --- | --- |
 | `Alt+e` | Open the session overview. Press again to close the popup with the default binding. |
 | `Alt+w` | Open the window overview for the current session. |
-| `Shift+F12` | Open settings. This is the only binding the plugin creates; `Ctrl+,` works only if your terminal sends the `Shift+F12` sequence for it (see below). |
+| `Shift+F12` | Open settings. To use `Ctrl+,`, configure your terminal to send the `Shift+F12` sequence (see below). |
 | Arrow keys | Move the selection. |
 | Mouse wheel | Scroll by row. |
 | Left click | Select a session or window card. Press `Enter` to open or switch to it. |
@@ -202,7 +222,7 @@ Add this to `~/.claude/settings.json` for all projects or to a project's `.claud
 }
 ```
 
-`StopFailure` is not optional. Claude Code fires `StopFailure` instead of `Stop` when a turn ends with an API error, and `Stop` does not fire when you interrupt. Without it the badge stays on `working` after such a turn, because nothing overwrites it.
+Keep the `StopFailure` hook to mark API errors as needing attention. Claude Code fires this event in place of `Stop` when an API error ends the turn. [Claude Code hook events](https://code.claude.com/docs/en/hooks#stopfailure)
 
 Restart Claude Code or start a new session inside tmux, then run `/hooks` to verify the five events. Check that `tmux-workspace-expose --version` runs in the same terminal. If you installed the binary to a custom path, replace `tmux-workspace-expose` in the example with the executable's absolute path — prefer the absolute path over a bare command name, since hook processes may not inherit the `PATH` that your interactive shell has. [Claude Code hooks reference](https://code.claude.com/docs/en/hooks)
 
