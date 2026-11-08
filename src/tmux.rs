@@ -11,18 +11,66 @@ const LEGACY_FIELD_SEPARATOR: char = '\u{1f}';
 // A printable private-use character keeps fields separate without colliding
 // with ordinary punctuation in session and window names.
 const WORKSPACE_SEPARATOR: char = '\u{e000}';
-const SESSION_FORMAT: &str =
-    "#{session_id}\u{e000}#{session_name}\u{e000}#{session_attached}\u{e000}#{session_windows}";
-const WORKSPACE_PANE_FORMAT: &str = concat!(
-    "#{session_id}\u{e000}#{window_id}\u{e000}#{window_index}\u{e000}#{window_name}\u{e000}",
-    "#{window_width}\u{e000}#{window_height}\u{e000}#{window_active}\u{e000}",
-    "#{pane_id}\u{e000}#{pane_index}\u{e000}#{pane_left}\u{e000}#{pane_top}\u{e000}",
-    "#{pane_width}\u{e000}#{pane_height}\u{e000}#{pane_active}\u{e000}",
-    "#{pane_current_command}\u{e000}#{@agent_status}\u{e000}#{@agent_status_since}\u{e000}",
-    "#{?window_zoomed_flag,#{window_layout},}\u{e000}",
-    // A retained dead pane keeps its options, even after respawn-pane.
-    "#{||:#{pane_dead},#{&&:#{@agent_status_pane_pid},#{!=:#{pane_pid},#{@agent_status_pane_pid}}}}"
+// Keep each tmux format and its decoded fields in the same declaration.
+macro_rules! tmux_fields {
+    ($format:ident, $record:ident { $first:ident: $first_expr:literal $(, $field:ident: $expr:literal)* $(,)? }) => {
+        const $format: &str = concat!($first_expr $(, "\u{e000}", $expr)*);
+
+        struct $record<'a> {
+            $first: &'a str,
+            $($field: &'a str,)*
+        }
+
+        impl<'a> $record<'a> {
+            fn parse(line: &'a str) -> Result<Self> {
+                let mut parts = line.split(WORKSPACE_SEPARATOR);
+                let result = Self {
+                    $first: parts.next().context(concat!("missing ", stringify!($first)))?,
+                    $($field: parts.next().context(concat!("missing ", stringify!($field)))?,)*
+                };
+                anyhow::ensure!(parts.next().is_none(), "unexpected extra field");
+                Ok(result)
+            }
+        }
+    };
+}
+
+tmux_fields!(
+    SESSION_FORMAT,
+    SessionFields {
+        id: "#{session_id}",
+        name: "#{session_name}",
+        attached: "#{session_attached}",
+        window_count: "#{session_windows}",
+    }
 );
+
+tmux_fields!(
+    WORKSPACE_PANE_FORMAT,
+    WorkspaceFields {
+        session_id: "#{session_id}",
+        window_id: "#{window_id}",
+        window_index: "#{window_index}",
+        window_name: "#{window_name}",
+        window_width: "#{window_width}",
+        window_height: "#{window_height}",
+        window_active: "#{window_active}",
+        pane_id: "#{pane_id}",
+        pane_index: "#{pane_index}",
+        pane_left: "#{pane_left}",
+        pane_top: "#{pane_top}",
+        pane_width: "#{pane_width}",
+        pane_height: "#{pane_height}",
+        pane_active: "#{pane_active}",
+        pane_command: "#{pane_current_command}",
+        agent_status: "#{@agent_status}",
+        agent_status_since: "#{@agent_status_since}",
+        zoomed_layout: "#{?window_zoomed_flag,#{window_layout},}",
+        // A retained dead pane keeps its options, even after respawn-pane.
+        stale: "#{||:#{pane_dead},#{&&:#{@agent_status_pane_pid},#{!=:#{pane_pid},#{@agent_status_pane_pid}}}}",
+    }
+);
+
 type PaneAgentRow = (String, Option<AgentStatus>, Option<i64>);
 
 #[derive(Debug)]
@@ -34,36 +82,76 @@ struct WorkspaceRow {
     agent_status_since: Option<i64>,
 }
 
-fn parse_workspace_rows(output: &str) -> Vec<WorkspaceRow> {
-    output.lines().filter_map(parse_workspace_row).collect()
+fn parse_rows<T>(output: &str, command: &str, parse: impl Fn(&str) -> Result<T>) -> Result<Vec<T>> {
+    output
+        .lines()
+        .enumerate()
+        .map(|(index, line)| {
+            parse(line).map_err(|error| {
+                anyhow!(
+                    "unexpected format from tmux {command} on row {}: {error:#}",
+                    index + 1
+                )
+            })
+        })
+        .collect()
 }
 
-fn parse_workspace_row(line: &str) -> Option<WorkspaceRow> {
-    let separator = if line.contains(WORKSPACE_SEPARATOR) {
-        WORKSPACE_SEPARATOR
-    } else {
-        LEGACY_FIELD_SEPARATOR
-    };
-    let fields: Vec<&str> = line.split(separator).collect();
-    if !(17..=19).contains(&fields.len()) || fields[0].is_empty() {
-        return None;
-    }
-    let (agent_status, agent_status_since) = if fields.get(18) == Some(&"1") {
+fn parse_workspace_rows(output: &str) -> Result<Vec<WorkspaceRow>> {
+    parse_rows(output, "list-panes", parse_workspace_row)
+}
+
+fn parse_workspace_row(line: &str) -> Result<WorkspaceRow> {
+    let fields = WorkspaceFields::parse(line)?;
+    anyhow::ensure!(!fields.session_id.is_empty(), "missing session_id");
+    anyhow::ensure!(!fields.window_id.is_empty(), "missing window_id");
+    anyhow::ensure!(!fields.pane_id.is_empty(), "missing pane_id");
+    let (agent_status, agent_status_since) = if fields.stale == "1" {
         (None, None)
     } else {
-        (AgentStatus::parse(fields[15]), fields[16].parse().ok())
+        (
+            AgentStatus::parse(fields.agent_status),
+            fields.agent_status_since.parse().ok(),
+        )
     };
     let mut row = WorkspaceRow {
-        session_id: fields[0].to_string(),
-        window: parse_window_fields(&fields)?,
-        pane: parse_pane_fields(&fields)?,
+        session_id: fields.session_id.to_owned(),
+        window: WindowPreview {
+            id: fields.window_id.to_owned(),
+            index: fields
+                .window_index
+                .parse()
+                .context("invalid window_index")?,
+            name: fields.window_name.to_owned(),
+            width: fields
+                .window_width
+                .parse()
+                .context("invalid window_width")?,
+            height: fields
+                .window_height
+                .parse()
+                .context("invalid window_height")?,
+            active: fields.window_active == "1",
+            panes: Vec::new(),
+        },
+        pane: PanePreview {
+            id: fields.pane_id.to_owned(),
+            index: fields.pane_index.parse().context("invalid pane_index")?,
+            left: fields.pane_left.parse().context("invalid pane_left")?,
+            top: fields.pane_top.parse().context("invalid pane_top")?,
+            width: fields.pane_width.parse().context("invalid pane_width")?,
+            height: fields.pane_height.parse().context("invalid pane_height")?,
+            active: fields.pane_active == "1",
+            command: fields.pane_command.to_owned(),
+        },
         agent_status,
         agent_status_since,
     };
-    if let Some(&layout) = fields.get(17).filter(|layout| !layout.is_empty()) {
-        restore_unzoomed_geometry(layout, &mut row.window, &mut row.pane)?;
+    if !fields.zoomed_layout.is_empty() {
+        restore_unzoomed_geometry(fields.zoomed_layout, &mut row.window, &mut row.pane)
+            .context("invalid zoomed window layout")?;
     }
-    Some(row)
+    Ok(row)
 }
 
 fn restore_unzoomed_geometry(
@@ -94,31 +182,6 @@ fn restore_pane_geometry(fields: &[&str], pane: &mut PanePreview) -> Option<()> 
 fn layout_size(size: &str) -> Option<(u16, u16)> {
     let (width, height) = size.split_once('x')?;
     Some((width.parse().ok()?, height.parse().ok()?))
-}
-
-fn parse_window_fields(fields: &[&str]) -> Option<WindowPreview> {
-    Some(WindowPreview {
-        id: (!fields[1].is_empty()).then(|| fields[1].to_string())?,
-        index: fields[2].parse().ok()?,
-        name: fields[3].to_string(),
-        width: fields[4].parse().ok()?,
-        height: fields[5].parse().ok()?,
-        active: fields[6] == "1",
-        panes: Vec::new(),
-    })
-}
-
-fn parse_pane_fields(fields: &[&str]) -> Option<PanePreview> {
-    Some(PanePreview {
-        id: (!fields[7].is_empty()).then(|| fields[7].to_string())?,
-        index: fields[8].parse().ok()?,
-        left: fields[9].parse().ok()?,
-        top: fields[10].parse().ok()?,
-        width: fields[11].parse().ok()?,
-        height: fields[12].parse().ok()?,
-        active: fields[13] == "1",
-        command: fields[14].to_string(),
-    })
 }
 
 fn attach_workspace_rows(sessions: &mut [Session], rows: &[WorkspaceRow]) {
@@ -282,6 +345,7 @@ pub fn switch_client_for(client: Option<&str>, session_target: &str) -> Result<(
     Ok(())
 }
 
+/// Parses session listings, including the legacy separators accepted by this library API.
 pub fn parse_sessions(output: &str) -> Vec<Session> {
     output
         .lines()
@@ -294,8 +358,8 @@ pub fn parse_sessions(output: &str) -> Vec<Session> {
                 FIELD_SEPARATOR
             };
             let mut parts = line.split(separator);
-            let id = parts.next()?.to_string();
-            let name = parts.next()?.to_string();
+            let id = parts.next()?;
+            let name = parts.next()?;
             if name.is_empty() {
                 return None;
             }
@@ -305,28 +369,13 @@ pub fn parse_sessions(output: &str) -> Vec<Session> {
                 .next()
                 .and_then(|value| value.parse::<u32>().ok())
                 .unwrap_or(0);
-            Some(Session {
-                id,
-                name,
-                attached,
-                window_count,
-                windows: Vec::new(),
-                agent_status: None,
-                agent_status_since: None,
-                agent_pane_counts: AgentPaneCounts::default(),
-            })
+            Some(session_metadata(id, name, attached, window_count))
         })
         .collect()
 }
 
-/// One tmux query supplies the workspace tree and its agent status badges.
 fn list_workspace_rows() -> Result<Vec<WorkspaceRow>> {
-    let stdout = list_pane_output(WORKSPACE_PANE_FORMAT)?;
-    let rows = parse_workspace_rows(&stdout);
-    if rows.len() != stdout.lines().count() {
-        return Err(anyhow!("unexpected format from tmux list-panes"));
-    }
-    Ok(rows)
+    parse_workspace_rows(&list_pane_output(WORKSPACE_PANE_FORMAT)?)
 }
 
 fn list_pane_output(format: &str) -> Result<String> {
@@ -403,14 +452,37 @@ fn apply_agent_status(sessions: &mut [Session], rows: &[PaneAgentRow]) {
 }
 
 fn parse_sessions_output(output: &str) -> Result<Vec<Session>> {
-    let sessions = parse_sessions(output);
-    if sessions.is_empty() && !output.trim().is_empty() {
-        return Err(anyhow!(
-            "tmux list-sessions returned output in an unexpected format"
-        ));
-    }
+    parse_rows(output, "list-sessions", |line| {
+        let fields = SessionFields::parse(line)?;
+        anyhow::ensure!(!fields.id.is_empty(), "missing session id");
+        anyhow::ensure!(!fields.name.is_empty(), "missing session name");
+        Ok(session_metadata(
+            fields.id,
+            fields.name,
+            fields
+                .attached
+                .parse::<u32>()
+                .context("invalid session_attached")?
+                != 0,
+            fields
+                .window_count
+                .parse()
+                .context("invalid session_windows")?,
+        ))
+    })
+}
 
-    Ok(sessions)
+fn session_metadata(id: &str, name: &str, attached: bool, window_count: u32) -> Session {
+    Session {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        attached,
+        window_count,
+        windows: Vec::new(),
+        agent_status: None,
+        agent_status_since: None,
+        agent_pane_counts: AgentPaneCounts::default(),
+    }
 }
 
 pub(crate) fn tmux_output(args: &[&str], message: &str) -> Result<Output> {
@@ -494,10 +566,16 @@ mod tests {
     }
 
     #[test]
+    fn rejects_partial_session_snapshots() {
+        let output = "$1\u{e000}dev\u{e000}0\u{e000}1\ntruncated\n";
+        assert!(parse_sessions_output(output).is_err());
+    }
+
+    #[test]
     fn parses_pane_agent_rows() {
         let rows = parse_workspace_rows(
-            "$1\u{1f}@1\u{1f}0\u{1f}dev\u{1f}80\u{1f}24\u{1f}1\u{1f}%1\u{1f}0\u{1f}0\u{1f}0\u{1f}80\u{1f}24\u{1f}1\u{1f}zsh\u{1f}waiting\u{1f}1700000000\n",
-        );
+            "$1\u{e000}@1\u{e000}0\u{e000}dev\u{e000}80\u{e000}24\u{e000}1\u{e000}%1\u{e000}0\u{e000}0\u{e000}0\u{e000}80\u{e000}24\u{e000}1\u{e000}zsh\u{e000}waiting\u{e000}1700000000\u{e000}\u{e000}0\n",
+        ).unwrap();
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].agent_status, Some(AgentStatus::Waiting));
@@ -511,7 +589,8 @@ mod tests {
             "$1\u{e000}@1\u{e000}0\u{e000}dev\u{e000}80\u{e000}24\u{e000}1\u{e000}",
             "%1\u{e000}0\u{e000}0\u{e000}0\u{e000}80\u{e000}24\u{e000}1\u{e000}",
             "zsh\u{e000}attention\u{e000}100\u{e000}\u{e000}1\n"
-        ));
+        ))
+        .unwrap();
 
         attach_workspace_rows(&mut sessions, &rows);
 
@@ -524,8 +603,8 @@ mod tests {
     fn parses_pane_with_no_agent_status_as_none() {
         // Unset tmux pane options render as empty fields, not missing ones.
         let rows = parse_workspace_rows(
-            "$1\u{1f}@1\u{1f}0\u{1f}dev\u{1f}80\u{1f}24\u{1f}1\u{1f}%1\u{1f}0\u{1f}0\u{1f}0\u{1f}80\u{1f}24\u{1f}1\u{1f}zsh\u{1f}\u{1f}\n",
-        );
+            "$1\u{e000}@1\u{e000}0\u{e000}dev\u{e000}80\u{e000}24\u{e000}1\u{e000}%1\u{e000}0\u{e000}0\u{e000}0\u{e000}80\u{e000}24\u{e000}1\u{e000}zsh\u{e000}\u{e000}\u{e000}\u{e000}0\n",
+        ).unwrap();
 
         assert_eq!(rows[0].agent_status, None);
         assert_eq!(rows[0].agent_status_since, None);
@@ -536,8 +615,8 @@ mod tests {
         // Status and timestamp parse independently — an unrecognized status
         // still leaves a well-formed timestamp field intact.
         let rows = parse_workspace_rows(
-            "$1\u{1f}@1\u{1f}0\u{1f}dev\u{1f}80\u{1f}24\u{1f}1\u{1f}%1\u{1f}0\u{1f}0\u{1f}0\u{1f}80\u{1f}24\u{1f}1\u{1f}zsh\u{1f}unknown\u{1f}123\n",
-        );
+            "$1\u{e000}@1\u{e000}0\u{e000}dev\u{e000}80\u{e000}24\u{e000}1\u{e000}%1\u{e000}0\u{e000}0\u{e000}0\u{e000}80\u{e000}24\u{e000}1\u{e000}zsh\u{e000}unknown\u{e000}123\u{e000}\u{e000}0\n",
+        ).unwrap();
 
         assert_eq!(rows[0].agent_status, None);
         assert_eq!(rows[0].agent_status_since, Some(123));
@@ -594,11 +673,11 @@ mod tests {
     fn groups_workspace_panes_by_session_and_window() {
         let mut sessions = vec![test_session("$1"), test_session("$2")];
         let rows = parse_workspace_rows(concat!(
-            "$1\u{1f}@7\u{1f}0\u{1f}编译:测试\u{1f}100\u{1f}30\u{1f}1\u{1f}%3\u{1f}0\u{1f}0\u{1f}0\u{1f}49\u{1f}30\u{1f}1\u{1f}zsh\u{1f}waiting\u{1f}100\n",
-            "$1\u{1f}@7\u{1f}0\u{1f}编译:测试\u{1f}100\u{1f}30\u{1f}1\u{1f}%4\u{1f}1\u{1f}50\u{1f}0\u{1f}50\u{1f}30\u{1f}0\u{1f}cargo\u{1f}\u{1f}\n",
-            "$1\u{1f}@8\u{1f}1\u{1f}日志\u{1f}100\u{1f}30\u{1f}0\u{1f}%5\u{1f}0\u{1f}0\u{1f}0\u{1f}100\u{1f}30\u{1f}1\u{1f}tail\u{1f}\u{1f}\n",
-            "$2\u{1f}@7\u{1f}0\u{1f}编译:测试\u{1f}100\u{1f}30\u{1f}1\u{1f}%3\u{1f}0\u{1f}0\u{1f}0\u{1f}49\u{1f}30\u{1f}1\u{1f}zsh\u{1f}waiting\u{1f}100\n",
-        ));
+            "$1\u{e000}@7\u{e000}0\u{e000}编译:测试\u{e000}100\u{e000}30\u{e000}1\u{e000}%3\u{e000}0\u{e000}0\u{e000}0\u{e000}49\u{e000}30\u{e000}1\u{e000}zsh\u{e000}waiting\u{e000}100\u{e000}\u{e000}0\n",
+            "$1\u{e000}@7\u{e000}0\u{e000}编译:测试\u{e000}100\u{e000}30\u{e000}1\u{e000}%4\u{e000}1\u{e000}50\u{e000}0\u{e000}50\u{e000}30\u{e000}0\u{e000}cargo\u{e000}\u{e000}\u{e000}\u{e000}0\n",
+            "$1\u{e000}@8\u{e000}1\u{e000}日志\u{e000}100\u{e000}30\u{e000}0\u{e000}%5\u{e000}0\u{e000}0\u{e000}0\u{e000}100\u{e000}30\u{e000}1\u{e000}tail\u{e000}\u{e000}\u{e000}\u{e000}0\n",
+            "$2\u{e000}@7\u{e000}0\u{e000}编译:测试\u{e000}100\u{e000}30\u{e000}1\u{e000}%3\u{e000}0\u{e000}0\u{e000}0\u{e000}49\u{e000}30\u{e000}1\u{e000}zsh\u{e000}waiting\u{e000}100\u{e000}\u{e000}0\n",
+        )).unwrap();
         attach_workspace_rows(&mut sessions, &rows);
 
         assert_eq!(sessions[0].windows.len(), 2);
@@ -617,8 +696,8 @@ mod tests {
         let rows = parse_workspace_rows(concat!(
             "$1\u{e000}@1\u{e000}0\u{e000}dev\u{e000}100\u{e000}24\u{e000}1\u{e000}%1\u{e000}1\u{e000}",
             "0\u{e000}0\u{e000}100\u{e000}24\u{e000}1\u{e000}zsh\u{e000}\u{e000}\u{e000}",
-            "c522,120x30,0,0{60x30,0,0,0,59x30,61,0[59x15,61,0,1,59x14,61,16,2]}"
-        ));
+            "c522,120x30,0,0{60x30,0,0,0,59x30,61,0[59x15,61,0,1,59x14,61,16,2]}\u{e000}0"
+        )).unwrap();
         let [row] = rows.as_slice() else {
             panic!("missing zoomed pane")
         };
@@ -630,15 +709,12 @@ mod tests {
 
     #[test]
     fn rejects_workspace_rows_without_session_window_or_pane_id() {
-        let row = "$1\u{1f}@7\u{1f}0\u{1f}dev\u{1f}80\u{1f}24\u{1f}1\u{1f}%3\u{1f}0\u{1f}0\u{1f}0\u{1f}80\u{1f}24\u{1f}1\u{1f}zsh\u{1f}\u{1f}";
-        assert_eq!(parse_workspace_rows(row).len(), 1);
-        assert_eq!(
-            parse_workspace_rows(&row.replace(LEGACY_FIELD_SEPARATOR, "\u{e000}")).len(),
-            1
-        );
-        assert!(parse_workspace_row(&row.replacen("$1", "", 1)).is_none());
-        assert!(parse_workspace_row(&row.replacen("@7", "", 1)).is_none());
-        assert!(parse_workspace_row(&row.replacen("%3", "", 1)).is_none());
+        let row = "$1\u{e000}@7\u{e000}0\u{e000}dev\u{e000}80\u{e000}24\u{e000}1\u{e000}%3\u{e000}0\u{e000}0\u{e000}0\u{e000}80\u{e000}24\u{e000}1\u{e000}zsh\u{e000}\u{e000}\u{e000}\u{e000}0";
+        assert_eq!(parse_workspace_rows(row).unwrap().len(), 1);
+        assert!(parse_workspace_rows(&row.replace(WORKSPACE_SEPARATOR, "\u{1f}")).is_err());
+        assert!(parse_workspace_row(&row.replacen("$1", "", 1)).is_err());
+        assert!(parse_workspace_row(&row.replacen("@7", "", 1)).is_err());
+        assert!(parse_workspace_row(&row.replacen("%3", "", 1)).is_err());
     }
 
     fn test_session(id: &str) -> Session {
