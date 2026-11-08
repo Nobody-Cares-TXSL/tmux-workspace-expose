@@ -78,14 +78,6 @@ fn agent_status_word(status: AgentStatus, lang: Language) -> &'static str {
     }
 }
 
-fn agent_status_count(status: AgentStatus, counts: crate::model::AgentPaneCounts) -> u32 {
-    match status {
-        AgentStatus::Attention => counts.attention,
-        AgentStatus::Waiting => counts.waiting,
-        AgentStatus::Working => counts.working,
-    }
-}
-
 /// The bottom-border badge text for a session's agent status. A glyph alone
 /// (or a bare count like "⏳2") is a gamble — it depends on the terminal
 /// font rendering that character, and tells you nothing if it doesn't. So
@@ -101,36 +93,28 @@ fn agent_status_label(session: &Session, lang: Language) -> Option<String> {
         return None;
     }
 
-    let worst_count = agent_status_count(worst, counts);
-    let worst_label = if worst_count > 1 {
-        format!(
-            "{}{} {}",
-            agent_status_icon(worst),
-            worst_count,
-            agent_status_word(worst, lang)
-        )
+    let worst_count = counts.count(worst);
+    let count = if worst_count > 1 {
+        worst_count.to_string()
     } else {
-        format!(
-            "{} {}",
-            agent_status_icon(worst),
-            agent_status_word(worst, lang)
-        )
+        String::new()
     };
+    let worst_label = format!(
+        "{}{count} {}",
+        agent_status_icon(worst),
+        agent_status_word(worst, lang)
+    );
 
     if counts.total() == 1 {
         return Some(worst_label);
     }
 
     let mut parts = vec![worst_label];
-    for status in [
-        AgentStatus::Attention,
-        AgentStatus::Waiting,
-        AgentStatus::Working,
-    ] {
+    for status in AgentStatus::ALL.into_iter().rev() {
         if status == worst {
             continue;
         }
-        let count = agent_status_count(status, counts);
+        let count = counts.count(status);
         if count > 0 {
             parts.push(format!("{}{}", agent_status_icon(status), count));
         }

@@ -409,15 +409,16 @@ impl AgentAggregate {
     }
 
     fn worst(&self) -> Option<(AgentStatus, Option<i64>)> {
-        if self.counts.attention > 0 {
-            Some((AgentStatus::Attention, self.attention_since))
-        } else if self.counts.waiting > 0 {
-            Some((AgentStatus::Waiting, self.waiting_since))
-        } else if self.counts.working > 0 {
-            Some((AgentStatus::Working, self.working_since))
-        } else {
-            None
-        }
+        let worst = AgentStatus::ALL
+            .into_iter()
+            .rev()
+            .find(|&status| self.counts.count(status) != 0)?;
+        let since = match worst {
+            AgentStatus::Working => self.working_since,
+            AgentStatus::Waiting => self.waiting_since,
+            AgentStatus::Attention => self.attention_since,
+        };
+        Some((worst, since))
     }
 }
 

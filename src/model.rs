@@ -14,6 +14,8 @@ pub enum AgentStatus {
 }
 
 impl AgentStatus {
+    pub const ALL: [Self; 3] = [Self::Working, Self::Waiting, Self::Attention];
+
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "working" => Some(Self::Working),
@@ -35,6 +37,14 @@ pub struct AgentPaneCounts {
 }
 
 impl AgentPaneCounts {
+    pub fn count(self, status: AgentStatus) -> u32 {
+        match status {
+            AgentStatus::Working => self.working,
+            AgentStatus::Waiting => self.waiting,
+            AgentStatus::Attention => self.attention,
+        }
+    }
+
     pub fn total(&self) -> u32 {
         self.working + self.waiting + self.attention
     }
@@ -565,16 +575,10 @@ pub fn sort_sessions_by_agent_status_with_current(
     current_session_name: Option<&str>,
 ) {
     sessions.sort_by_key(|session| {
-        let rank = match session.agent_status {
-            Some(AgentStatus::Attention) => 3,
-            Some(AgentStatus::Waiting) => 2,
-            Some(AgentStatus::Working) => 1,
-            None => 0,
-        };
         let is_tracked_current =
             session.agent_status.is_some() && current_session_name == Some(session.name.as_str());
         (
-            std::cmp::Reverse(rank),
+            std::cmp::Reverse(session.agent_status),
             is_tracked_current,
             session.agent_status_since.unwrap_or(i64::MAX),
         )
