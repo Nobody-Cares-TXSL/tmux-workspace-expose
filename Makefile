@@ -59,13 +59,10 @@ clippy:
 lint: fmt-check clippy
 
 # Check tmux plugin entrypoint
-plugin-check:
+plugin-check: build
 	test -x tmux.expose.tmux
 	bash -n tmux.expose.tmux
 	bash tests/plugin_entrypoint_test.sh
-	grep -q 'width="$${width:-100%}"' tmux.expose.tmux
-	grep -q 'height="$${height:-100%}"' tmux.expose.tmux
-	grep -q 'anchor="$${anchor:-center}"' tmux.expose.tmux
 
 # Run with arguments (usage: make run ARGS="--help")
 run:

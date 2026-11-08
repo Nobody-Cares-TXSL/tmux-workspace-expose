@@ -207,18 +207,55 @@ impl Default for Appearance {
 
 impl Appearance {
     pub fn load(mut fallback: Self) -> Result<Self> {
-        let data = match fs::read_to_string(crate::config::path("appearance.conf")?) {
-            Ok(data) => data,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(fallback),
-            Err(error) => return Err(error.into()),
-        };
-        for (option, value) in data.lines().filter_map(|line| line.split_once('=')) {
-            if let Some(index) = FIELDS.iter().position(|field| field.option == option) {
-                fallback.0[index] = value.to_owned();
+        if let Some(saved) = read_saved()? {
+            for (field, value) in fallback.0.iter_mut().zip(saved) {
+                if let Some(value) = value {
+                    *field = value;
+                }
+            }
+            fallback.validate()?;
+        }
+        Ok(fallback)
+    }
+
+    #[doc(hidden)]
+    pub fn popup_spec(
+        mut options: [String; POPUP_BORDER + 1],
+    ) -> Result<[String; POPUP_BORDER + 1]> {
+        let table = default_key_table(&options[LAUNCH_KEY]);
+        if options[KEY_TABLE].is_empty() {
+            options[KEY_TABLE] = table.into();
+        }
+        for (value, field) in options[..=POPUP_ANCHOR].iter_mut().zip(FIELDS) {
+            if value.is_empty() {
+                *value = field.default.into();
             }
         }
-        fallback.validate()?;
-        Ok(fallback)
+        if let Some(saved) = read_saved()? {
+            for (index, (option, value)) in options.iter_mut().zip(saved).enumerate() {
+                if let Some(value) = value {
+                    match index {
+                        POPUP_BACKGROUND | POPUP_BORDER => {
+                            if !option.is_empty() {
+                                option.push(',');
+                            }
+                            option.push_str(if index == POPUP_BACKGROUND {
+                                "bg="
+                            } else {
+                                "fg="
+                            });
+                            option.push_str(&value);
+                        }
+                        _ => *option = value,
+                    }
+                }
+            }
+        }
+        anyhow::ensure!(
+            options.iter().all(|value| !value.contains(['\n', '\r'])),
+            "Popup settings must fit on one line"
+        );
+        Ok(options)
     }
 
     pub fn from_tmux() -> Self {
@@ -270,10 +307,8 @@ impl Appearance {
             };
             appearance.0[index] = value.to_owned();
         }
-        if parts.clone().next().is_some_and(|key| !key.is_empty())
-            && parts.clone().nth(KEY_TABLE) == Some("")
-        {
-            appearance.0[KEY_TABLE] = "prefix".into();
+        if parts.clone().nth(KEY_TABLE) == Some("") {
+            appearance.0[KEY_TABLE] = default_key_table(parts.clone().next().unwrap_or("")).into();
         }
         appearance
     }
@@ -435,7 +470,12 @@ impl Appearance {
             .collect();
         fs::write(&path, data)?;
         if let Some(plugin) = plugin {
-            let output = Command::new("bash").arg(&plugin).output();
+            let output = env::current_exe().and_then(|binary| {
+                Command::new("bash")
+                    .env("TMUX_EXPOSE_POPUP_HELPER", binary)
+                    .arg(&plugin)
+                    .output()
+            });
             if !output.as_ref().is_ok_and(|output| output.status.success()) {
                 match prior {
                     Some(data) => fs::write(&path, data)?,
@@ -470,6 +510,29 @@ impl Appearance {
         }
         Ok(())
     }
+}
+
+fn default_key_table(key: &str) -> &'static str {
+    if key.is_empty() {
+        FIELDS[KEY_TABLE].default
+    } else {
+        "prefix"
+    }
+}
+
+fn read_saved() -> Result<Option<[Option<String>; FIELDS.len()]>> {
+    let data = match fs::read_to_string(crate::config::path("appearance.conf")?) {
+        Ok(data) => data,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let mut saved = std::array::from_fn(|_| None);
+    for (option, value) in data.lines().filter_map(|line| line.split_once('=')) {
+        if let Some(index) = FIELDS.iter().position(|field| field.option == option) {
+            saved[index] = Some(value.to_owned());
+        }
+    }
+    Ok(Some(saved))
 }
 
 fn binding(table: &str, key: &str) -> Result<Option<String>> {

@@ -7,6 +7,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 run_plugin() {
   local tmpdir
   tmpdir="$(mktemp -d)"
+  trap "rm -rf -- $(printf '%q' "${tmpdir}")" EXIT
 
   cat >"${tmpdir}/tmux" <<'FAKE_TMUX'
 #!/usr/bin/env bash
@@ -75,6 +76,10 @@ fi
 printf '%q ' "$@" >>"${TMUX_EXPOSE_TEST_OUTPUT}"
 FAKE_TMUX
   chmod +x "${tmpdir}/tmux"
+  if [[ "${TMUX_EXPOSE_TEST_SAVED:-}" ]]; then
+    mkdir -p "${tmpdir}/config/tmux-expose"
+    printf '%s\n' "${TMUX_EXPOSE_TEST_SAVED}" >"${tmpdir}/config/tmux-expose/appearance.conf"
+  fi
 
   XDG_CONFIG_HOME="${tmpdir}/config" \
     TMUX_EXPOSE_TEST_OUTPUT="${tmpdir}/output" \
@@ -91,7 +96,7 @@ FAKE_TMUX
     TMUX_EXPOSE_TEST_VIM_KEYS="${TMUX_EXPOSE_TEST_VIM_KEYS:-}" \
     TMUX_EXPOSE_TEST_COMMAND="${TMUX_EXPOSE_TEST_COMMAND:-}" \
     PATH="${tmpdir}:${PATH}" \
-    bash "${repo_root}/tmux.expose.tmux"
+    bash "${repo_root}/tmux.expose.tmux" || return
   tr -d '\n' <"${tmpdir}/output"
 }
 
@@ -116,6 +121,23 @@ assert_equals \
 assert_equals \
   'bind-key -T prefix E display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=E -E tmux-expose ' \
   "$(TMUX_EXPOSE_TEST_KEY=E run_plugin)"
+
+assert_equals \
+  'bind-key -T prefix R display-popup -w 60% -h 100% -y \#\{popup_pane_bottom\} -s bg=colour234\,bold\,bg=blue -S fg=yellow -e TMUX_EXPOSE_TOGGLE_KEY=R -E tmux-expose ' \
+  "$(TMUX_EXPOSE_POPUP_HELPER="${CARGO_TARGET_DIR:-${repo_root}/target}/debug/tmux-expose" \
+    TMUX_EXPOSE_TEST_KEY=E TMUX_EXPOSE_TEST_STYLE='bg=colour234,bold' \
+    TMUX_EXPOSE_TEST_SAVED=$'key=R\nwidth=60%\nanchor=bottom\nbackground=red\nbackground=blue\nborder=yellow' \
+    run_plugin)"
+
+assert_equals \
+  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -E tmux-expose ' \
+  "$(TMUX_EXPOSE_POPUP_HELPER=/bin/false run_plugin)"
+
+if result="$(TMUX_EXPOSE_POPUP_HELPER=/bin/false TMUX_EXPOSE_TEST_SAVED='key=M-r' run_plugin 2>&1)"; then
+  printf 'Expected a failure when the binary cannot read saved settings\n' >&2
+  exit 1
+fi
+[[ "${result}" == *"could not load saved popup settings"* ]]
 
 assert_equals \
   'bind-key -T root C-e display-popup -w 80% -h 70% -e TMUX_EXPOSE_TOGGLE_KEY=C-e -E tmux-expose\ --columns\ 2 ' \

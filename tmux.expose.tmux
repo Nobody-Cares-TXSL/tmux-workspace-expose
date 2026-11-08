@@ -29,32 +29,50 @@ border_style="$(tmux show-option -gqv @tmux-expose-border-style)"
 agent_sort="$(tmux show-option -gqv @tmux-expose-agent-sort)"
 vim_keys="$(tmux show-option -gqv @tmux-expose-vim-keys)"
 command="$(tmux show-option -gqv @tmux-expose-command)"
-
-if [[ -z "${key}" ]]; then
-  key="M-e"
-  key_table="${key_table:-root}"
-else
-  key_table="${key_table:-prefix}"
-fi
-
-width="${width:-100%}"
-height="${height:-100%}"
-anchor="${anchor:-center}"
-appearance_file="${XDG_CONFIG_HOME:-${HOME}/.config}/tmux-expose/appearance.conf"
-if [[ -r "${appearance_file}" ]]; then
-  while IFS='=' read -r option value; do
-    case "${option}" in
-      key) key="${value}" ;;
-      key-table) key_table="${value}" ;;
-      width) width="${value}" ;;
-      height) height="${value}" ;;
-      anchor) anchor="${value}" ;;
-      background) style="${style:+${style},}bg=${value}" ;;
-      border) border_style="${border_style:+${border_style},}fg=${value}" ;;
-    esac
-  done < "${appearance_file}"
-fi
 command="${command:-tmux-expose}"
+
+helper="${TMUX_EXPOSE_POPUP_HELPER:-${command}}"
+# The popup command can be an arbitrary shell command or a user wrapper.
+if [[ -z "${TMUX_EXPOSE_POPUP_HELPER:-}" && "${helper##*/}" != tmux-expose ]]; then
+  helper=tmux-expose
+fi
+if [[ "${helper}" == '~/'* ]]; then
+  helper="${HOME}/${helper:2}"
+fi
+if [[ ! -f "${helper}" || ! -x "${helper}" ]]; then
+  helper="$(type -P -- "${helper}" || type -P tmux-expose || true)"
+fi
+if [[ -n "${helper}" ]] && spec="$("${helper}" --print-popup-spec \
+    "${key}" "${key_table}" "${width}" "${height}" "${anchor}" "${style}" "${border_style}" 2>&1)"; then
+  {
+    IFS= read -r key
+    IFS= read -r key_table
+    IFS= read -r width
+    IFS= read -r height
+    IFS= read -r anchor
+    IFS= read -r style
+    IFS= read -r border_style
+    IFS= read -r end
+  } <<< "${spec}"
+  [[ "${end}" == end ]]
+else
+  # TPM can source the script before the matching binary has been installed.
+  # Keep the tmux defaults available on first install.
+  if [[ -e "${XDG_CONFIG_HOME:-${HOME}/.config}/tmux-expose/appearance.conf" ]]; then
+    printf 'tmux.expose: could not load saved popup settings. Check the error below or install the matching binary.\n%s\n' "${spec:-}" >&2
+    exit 1
+  fi
+  if [[ -z "${key}" ]]; then
+    key="M-e"
+    key_table="${key_table:-root}"
+  else
+    key_table="${key_table:-prefix}"
+  fi
+
+  width="${width:-100%}"
+  height="${height:-100%}"
+  anchor="${anchor:-center}"
+fi
 # Quote options for the popup shell command, including colors beginning with '#'.
 for option in topology-refresh pane-refresh active-pane-refresh max-captures \
   selected-color attached-color inactive-color attention-color waiting-color working-color; do

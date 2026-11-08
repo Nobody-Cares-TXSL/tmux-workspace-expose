@@ -147,8 +147,20 @@ fn validate_agent_status_word(status: &str) -> Result<()> {
 fn main() -> Result<()> {
     let mut raw_args = env::args();
     raw_args.next(); // program name
-    if raw_args.next().as_deref() == Some("agent-status") {
-        return run_agent_status(&raw_args.next().unwrap_or_default());
+    match raw_args.next().as_deref() {
+        Some("agent-status") => return run_agent_status(&raw_args.next().unwrap_or_default()),
+        Some("--print-popup-spec") => {
+            let options = raw_args
+                .collect::<Vec<_>>()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Expected seven tmux popup options"))?;
+            for value in Appearance::popup_spec(options)? {
+                println!("{value}");
+            }
+            println!("end");
+            return Ok(());
+        }
+        _ => {}
     }
 
     let cli = Cli::parse();

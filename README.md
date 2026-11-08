@@ -43,7 +43,7 @@ Add this line to your tmux configuration if you use [TPM](https://github.com/tmu
 set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 ```
 
-Reload your tmux configuration, press the prefix key followed by uppercase `I`, then press `Alt+e` to open the overview. TPM updates the plugin script. To update the binary as well, run `cargo install --locked --force --path .` from the updated checkout.
+Reload your tmux configuration, press the prefix key followed by uppercase `I`, then press `Alt+e` to open the overview. TPM updates the plugin script. To update the binary as well, run `cargo install --locked --force --path .` from the updated checkout, then reload your tmux configuration again. The plugin script uses the matching binary to read saved popup settings.
 
 ### Load manually
 

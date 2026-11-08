@@ -43,7 +43,7 @@ Cargo 包名为 `tmux-workspace-expose`，安装后的命令为 `tmux-expose`。
 set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 ```
 
-重新加载 tmux 配置，按前缀键再按大写 `I` 安装插件，然后按 `Alt+e` 打开总览。TPM 会更新插件脚本。要同步更新二进制，请从更新后的项目目录运行 `cargo install --locked --force --path .`。
+重新加载 tmux 配置，按前缀键再按大写 `I` 安装插件，然后按 `Alt+e` 打开总览。TPM 会更新插件脚本。要同步更新二进制，请从更新后的项目目录运行 `cargo install --locked --force --path .`，然后再次加载 tmux 配置。插件脚本通过配套的二进制读取已保存的弹窗设置。
 
 ### 手动加载
 
