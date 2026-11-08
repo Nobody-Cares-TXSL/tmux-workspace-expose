@@ -168,6 +168,8 @@ chars = "\u001B[24;2~"
 
 例如，在一个 Pane 里标记 `waiting`，再按 `Alt+e`，对应的 Session 卡片会提示它在等待回复。
 
+总览会忽略已退出的 Pane 上的标记，以及重新启动 Pane 前写入的标记。缺少 Pane 进程信息的旧标记可以手动清理。如果 Agent 退出后 Shell 仍在运行，且退出 hook 未清除标记，在对应 Pane 中执行 `tmux-expose agent-status clear`。在 tmux 内写入失败时，命令会返回错误，便于排查目标 Pane 或 hook 配置。
+
 ### Claude Code 设置
 
 把以下配置加入 `~/.claude/settings.json`（适用于所有项目）或项目的 `.claude/settings.json`（仅当前项目）。如果已有 `hooks`，把下面的条目追加到同名事件的数组中，保留原有配置。

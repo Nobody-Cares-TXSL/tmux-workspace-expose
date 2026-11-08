@@ -168,6 +168,8 @@ Status is recorded on the tmux pane that runs the command and summarized in the 
 
 For example, set a pane to `waiting` and press `Alt+e`. The session card will show the waiting badge.
 
+The overview ignores marks from dead panes and marks written before a pane was respawned. Older marks without pane process information can be cleared manually. If an agent exits and leaves its shell running without clearing its mark, run `tmux-expose agent-status clear` in that pane. Inside tmux, the command reports failed writes so you can check the target pane or hook configuration.
+
 ### Claude Code setup
 
 Add this to `~/.claude/settings.json` for all projects or to a project's `.claude/settings.json` for that project. If you already have a `hooks` block, append the entries below to the matching event arrays and keep your existing hooks.

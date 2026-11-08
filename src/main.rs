@@ -1,6 +1,5 @@
 use std::{
     env, io,
-    process::Command,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -119,18 +118,14 @@ fn run_agent_status(status: &str) -> Result<()> {
     }
 
     if status == "clear" {
-        clear_pane_option(&pane, "@agent_status");
-        clear_pane_option(&pane, "@agent_status_since");
-    } else {
-        set_pane_option(&pane, "@agent_status", status);
-        let since = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs().to_string())
-            .unwrap_or_default();
-        set_pane_option(&pane, "@agent_status_since", &since);
+        return tmux::write_agent_status(&pane, None);
     }
-
-    Ok(())
+    let since = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system time precedes the Unix epoch")?
+        .as_secs()
+        .to_string();
+    tmux::write_agent_status(&pane, Some((status, &since)))
 }
 
 fn validate_agent_status_word(status: &str) -> Result<()> {
@@ -138,20 +133,6 @@ fn validate_agent_status_word(status: &str) -> Result<()> {
         return Ok(());
     }
     bail!("unknown agent status {status:?}; expected working, waiting, attention, or clear");
-}
-
-// A hook should never fail loudly just because tmux hiccuped — swallow the
-// result rather than propagating it.
-fn set_pane_option(pane: &str, option: &str, value: &str) {
-    let _ = Command::new("tmux")
-        .args(["set-option", "-p", "-t", pane, option, value])
-        .status();
-}
-
-fn clear_pane_option(pane: &str, option: &str) {
-    let _ = Command::new("tmux")
-        .args(["set-option", "-p", "-t", pane, "-u", option])
-        .status();
 }
 
 fn main() -> Result<()> {

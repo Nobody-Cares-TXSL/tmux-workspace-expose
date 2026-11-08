@@ -19,7 +19,9 @@ const WORKSPACE_PANE_FORMAT: &str = concat!(
     "#{pane_id}\u{e000}#{pane_index}\u{e000}#{pane_left}\u{e000}#{pane_top}\u{e000}",
     "#{pane_width}\u{e000}#{pane_height}\u{e000}#{pane_active}\u{e000}",
     "#{pane_current_command}\u{e000}#{@agent_status}\u{e000}#{@agent_status_since}\u{e000}",
-    "#{?window_zoomed_flag,#{window_layout},}"
+    "#{?window_zoomed_flag,#{window_layout},}\u{e000}",
+    // A retained dead pane keeps its options, even after respawn-pane.
+    "#{||:#{pane_dead},#{&&:#{@agent_status_pane_pid},#{!=:#{pane_pid},#{@agent_status_pane_pid}}}}"
 );
 type PaneAgentRow = (String, Option<AgentStatus>, Option<i64>);
 
@@ -43,15 +45,20 @@ fn parse_workspace_row(line: &str) -> Option<WorkspaceRow> {
         LEGACY_FIELD_SEPARATOR
     };
     let fields: Vec<&str> = line.split(separator).collect();
-    if !(17..=18).contains(&fields.len()) || fields[0].is_empty() {
+    if !(17..=19).contains(&fields.len()) || fields[0].is_empty() {
         return None;
     }
+    let (agent_status, agent_status_since) = if fields.get(18) == Some(&"1") {
+        (None, None)
+    } else {
+        (AgentStatus::parse(fields[15]), fields[16].parse().ok())
+    };
     let mut row = WorkspaceRow {
         session_id: fields[0].to_string(),
         window: parse_window_fields(&fields)?,
         pane: parse_pane_fields(&fields)?,
-        agent_status: AgentStatus::parse(fields[15]),
-        agent_status_since: fields[16].parse().ok(),
+        agent_status,
+        agent_status_since,
     };
     if let Some(&layout) = fields.get(17).filter(|layout| !layout.is_empty()) {
         restore_unzoomed_geometry(layout, &mut row.window, &mut row.pane)?;
@@ -181,6 +188,48 @@ fn list_session_metadata() -> Result<Vec<Session>> {
     }
 
     parse_sessions_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+pub fn write_agent_status(pane: &str, marker: Option<(&str, &str)>) -> Result<()> {
+    let mut tmux = Command::new("tmux");
+    if let Some((status, since)) = marker {
+        tmux.args(["set-option", "-p", "-t", pane, "@agent_status", status])
+            .args([
+                ";",
+                "set-option",
+                "-p",
+                "-t",
+                pane,
+                "@agent_status_since",
+                since,
+            ])
+            .args([
+                ";",
+                "set-option",
+                "-pF",
+                "-t",
+                pane,
+                "@agent_status_pane_pid",
+                "#{pane_pid}",
+            ]);
+    } else {
+        tmux.args(["set-option", "-pu", "-t", pane, "@agent_status"])
+            .args([";", "set-option", "-pu", "-t", pane, "@agent_status_since"])
+            .args([
+                ";",
+                "set-option",
+                "-pu",
+                "-t",
+                pane,
+                "@agent_status_pane_pid",
+            ]);
+    }
+    let message = format!("failed to update agent status on tmux pane '{pane}'");
+    let output = tmux.output().with_context(|| message.clone())?;
+    if !output.status.success() {
+        return Err(tmux_error(&message, &output.stderr));
+    }
+    Ok(())
 }
 
 pub fn current_session_id() -> Result<Option<String>> {
@@ -488,6 +537,22 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].agent_status, Some(AgentStatus::Waiting));
         assert_eq!(rows[0].agent_status_since, Some(1700000000));
+    }
+
+    #[test]
+    fn stale_agent_status_does_not_hide_the_pane_or_affect_the_session_badge() {
+        let mut sessions = vec![test_session("$1")];
+        let rows = parse_workspace_rows(concat!(
+            "$1\u{e000}@1\u{e000}0\u{e000}dev\u{e000}80\u{e000}24\u{e000}1\u{e000}",
+            "%1\u{e000}0\u{e000}0\u{e000}0\u{e000}80\u{e000}24\u{e000}1\u{e000}",
+            "zsh\u{e000}attention\u{e000}100\u{e000}\u{e000}1\n"
+        ));
+
+        attach_workspace_rows(&mut sessions, &rows);
+
+        assert_eq!(sessions[0].windows[0].panes[0].id, "%1");
+        assert_eq!(sessions[0].agent_status, None);
+        assert_eq!(sessions[0].agent_status_since, None);
     }
 
     #[test]
