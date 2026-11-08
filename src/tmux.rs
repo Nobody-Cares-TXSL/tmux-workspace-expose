@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result, anyhow};
@@ -70,8 +70,6 @@ tmux_fields!(
         stale: "#{||:#{pane_dead},#{&&:#{@agent_status_pane_pid},#{!=:#{pane_pid},#{@agent_status_pane_pid}}}}",
     }
 );
-
-type PaneAgentRow = (String, Option<AgentStatus>, Option<i64>);
 
 #[derive(Debug)]
 struct WorkspaceRow {
@@ -185,41 +183,41 @@ fn layout_size(size: &str) -> Option<(u16, u16)> {
 }
 
 fn attach_workspace_rows(sessions: &mut [Session], rows: &[WorkspaceRow]) {
-    let agent_rows: Vec<_> = rows
+    let session_indices: HashMap<_, _> = sessions
         .iter()
-        .map(|row| {
-            (
-                row.session_id.clone(),
-                row.agent_status,
-                row.agent_status_since,
-            )
-        })
+        .enumerate()
+        .map(|(index, session)| (session.id.clone(), index))
         .collect();
-    apply_agent_status(sessions, &agent_rows);
+    let mut window_indices = HashMap::new();
+    let mut panes = HashSet::new();
+    let mut agents = HashMap::<_, AgentAggregate>::new();
 
     for row in rows {
-        let Some(session) = sessions
-            .iter_mut()
-            .find(|session| session.id == row.session_id)
-        else {
+        let Some(&session_index) = session_indices.get(&row.session_id) else {
             continue;
         };
-        let window = if let Some(index) = session
-            .windows
-            .iter()
-            .position(|window| window.id == row.window.id)
-        {
-            &mut session.windows[index]
-        } else {
-            session.windows.push(row.window.clone());
-            session.windows.last_mut().unwrap()
-        };
-        if window.panes.iter().any(|pane| pane.id == row.pane.id) {
-            continue;
+        let session = &mut sessions[session_index];
+        if let Some(status) = row.agent_status {
+            agents
+                .entry(session_index)
+                .or_default()
+                .record(status, row.agent_status_since);
         }
-        window.panes.push(row.pane.clone());
+        let window_index = *window_indices
+            .entry((session_index, row.window.id.as_str()))
+            .or_insert_with(|| {
+                let index = session.windows.len();
+                session.windows.push(row.window.clone());
+                index
+            });
+        if panes.insert((session_index, window_index, row.pane.id.as_str())) {
+            session.windows[window_index].panes.push(row.pane.clone());
+        }
     }
-    for session in sessions {
+    for (index, session) in sessions.iter_mut().enumerate() {
+        if let Some(aggregate) = agents.get(&index) {
+            aggregate.apply_to(session);
+        }
         session.windows.sort_by_key(|window| window.index);
         for window in &mut session.windows {
             window.panes.sort_by_key(|pane| pane.index);
@@ -417,6 +415,14 @@ struct AgentAggregate {
 }
 
 impl AgentAggregate {
+    fn apply_to(&self, session: &mut Session) {
+        session.agent_pane_counts = self.counts;
+        if let Some((status, since)) = self.worst() {
+            session.agent_status = Some(status);
+            session.agent_status_since = since;
+        }
+    }
+
     fn record(&mut self, status: AgentStatus, since: Option<i64>) {
         let (count, since_slot) = match status {
             AgentStatus::Attention => (&mut self.counts.attention, &mut self.attention_since),
@@ -446,29 +452,6 @@ fn merge_oldest(slot: &mut Option<i64>, candidate: Option<i64>) {
         (None, candidate) => *slot = candidate,
         (Some(current), Some(candidate)) if candidate < current => *slot = Some(candidate),
         _ => {}
-    }
-}
-
-fn apply_agent_status(sessions: &mut [Session], rows: &[PaneAgentRow]) {
-    let mut by_session: HashMap<&str, AgentAggregate> = HashMap::new();
-    for (session_id, status, since) in rows {
-        if let Some(status) = status {
-            by_session
-                .entry(session_id.as_str())
-                .or_default()
-                .record(*status, *since);
-        }
-    }
-
-    for session in sessions.iter_mut() {
-        let Some(aggregate) = by_session.get(session.id.as_str()) else {
-            continue;
-        };
-        session.agent_pane_counts = aggregate.counts;
-        (session.agent_status, session.agent_status_since) = match aggregate.worst() {
-            Some((status, since)) => (Some(status), since),
-            None => (None, None),
-        };
     }
 }
 
@@ -618,7 +601,7 @@ mod tests {
 
     #[test]
     fn stale_agent_status_does_not_hide_the_pane_or_affect_the_session_badge() {
-        let mut sessions = vec![test_session("$1")];
+        let mut sessions = [test_session("$1")];
         let rows = parse_workspace_rows(concat!(
             "$1\u{e000}@1\u{e000}0\u{e000}dev\u{e000}80\u{e000}24\u{e000}1\u{e000}",
             "%1\u{e000}0\u{e000}0\u{e000}0\u{e000}80\u{e000}24\u{e000}1\u{e000}",
@@ -658,19 +641,17 @@ mod tests {
 
     #[test]
     fn session_badge_is_the_worst_pane_status_present() {
-        let mut sessions = vec![test_session("$1")];
-        let rows = vec![
-            ("$1".to_string(), Some(AgentStatus::Working), Some(100)),
-            ("$1".to_string(), Some(AgentStatus::Waiting), Some(50)),
-            ("$1".to_string(), Some(AgentStatus::Attention), Some(200)),
-        ];
+        let mut session = test_session("$1");
+        let mut aggregate = AgentAggregate::default();
+        aggregate.record(AgentStatus::Working, Some(100));
+        aggregate.record(AgentStatus::Waiting, Some(50));
+        aggregate.record(AgentStatus::Attention, Some(200));
+        aggregate.apply_to(&mut session);
 
-        apply_agent_status(&mut sessions, &rows);
-
-        assert_eq!(sessions[0].agent_status, Some(AgentStatus::Attention));
-        assert_eq!(sessions[0].agent_status_since, Some(200));
+        assert_eq!(session.agent_status, Some(AgentStatus::Attention));
+        assert_eq!(session.agent_status_since, Some(200));
         assert_eq!(
-            sessions[0].agent_pane_counts,
+            session.agent_pane_counts,
             AgentPaneCounts {
                 working: 1,
                 waiting: 1,
@@ -681,23 +662,21 @@ mod tests {
 
     #[test]
     fn badge_timestamp_is_the_oldest_pane_at_the_worst_rank() {
-        let mut sessions = vec![test_session("$1")];
-        let rows = vec![
-            ("$1".to_string(), Some(AgentStatus::Waiting), Some(500)),
-            ("$1".to_string(), Some(AgentStatus::Waiting), Some(100)),
-        ];
+        let mut session = test_session("$1");
+        let mut aggregate = AgentAggregate::default();
+        aggregate.record(AgentStatus::Waiting, Some(500));
+        aggregate.record(AgentStatus::Waiting, Some(100));
+        aggregate.apply_to(&mut session);
 
-        apply_agent_status(&mut sessions, &rows);
-
-        assert_eq!(sessions[0].agent_status, Some(AgentStatus::Waiting));
-        assert_eq!(sessions[0].agent_status_since, Some(100));
+        assert_eq!(session.agent_status, Some(AgentStatus::Waiting));
+        assert_eq!(session.agent_status_since, Some(100));
     }
 
     #[test]
     fn sessions_with_no_matching_pane_rows_stay_agent_free() {
         let mut sessions = vec![test_session("$1")];
 
-        apply_agent_status(&mut sessions, &[]);
+        attach_workspace_rows(&mut sessions, &[]);
 
         assert_eq!(sessions[0].agent_status, None);
         assert_eq!(sessions[0].agent_status_since, None);
