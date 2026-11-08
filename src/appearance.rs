@@ -1,7 +1,9 @@
 use std::{env, fs, io, path::PathBuf, process::Command};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use ratatui::style::Color;
+
+use crate::tmux::{run_tmux, tmux_output};
 
 #[derive(Clone, Copy)]
 pub struct Field {
@@ -243,16 +245,12 @@ impl Appearance {
             })
             .collect::<Vec<_>>()
             .join("\u{e000}");
-        let Ok(output) = Command::new("tmux")
-            .args(["display-message", "-p", &format])
-            .output()
-        else {
+        let Ok(output) = run_tmux(
+            &["display-message", "-p", &format],
+            "Could not read tmux appearance",
+        ) else {
             return appearance;
         };
-        if !output.status.success() {
-            return appearance;
-        }
-        let output = String::from_utf8_lossy(&output.stdout);
         let parts = output.trim_end_matches('\n').split('\u{e000}');
         for (index, value) in parts.clone().take(FIELDS.len()).enumerate() {
             if value.is_empty() {
@@ -465,32 +463,29 @@ impl Appearance {
                 && binding(&previous.0[KEY_TABLE], &previous.0[LAUNCH_KEY])?
                     .is_some_and(|line| ours(&line))
             {
-                let output = Command::new("tmux")
-                    .args(["unbind-key", "-T", &previous.0[1], &previous.0[0]])
-                    .output()
-                    .context(lang.text(
+                run_tmux(
+                    &[
+                        "unbind-key",
+                        "-T",
+                        &previous.0[KEY_TABLE],
+                        &previous.0[LAUNCH_KEY],
+                    ],
+                    lang.text(
                         "移除旧启动键失败",
                         "Could not remove the previous launch key",
-                    ))?;
-                if !output.status.success() {
-                    bail!(
-                        "{}",
-                        lang.text(
-                            "移除旧启动键失败",
-                            "Could not remove the previous launch key"
-                        )
-                    );
-                }
+                    ),
+                )?;
             }
         }
         Ok(())
     }
 }
 
-fn binding(table: &str, key: &str) -> io::Result<Option<String>> {
-    let output = Command::new("tmux")
-        .args(["list-keys", "-T", table, key])
-        .output()?;
+fn binding(table: &str, key: &str) -> Result<Option<String>> {
+    let output = tmux_output(
+        &["list-keys", "-T", table, key],
+        "Could not look up tmux binding",
+    )?;
     Ok(output
         .status
         .success()

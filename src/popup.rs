@@ -1,11 +1,10 @@
 use std::{
     env, fs,
     path::PathBuf,
-    process::Command,
     time::{Duration, Instant},
 };
 
-use tmux_expose::model::App;
+use tmux_expose::{model::App, tmux::run_tmux};
 
 /// tmux 3.4 caps an open popup at its original dimensions. Return to its
 /// launcher once the client settles so a fresh popup uses the new dimensions.
@@ -47,20 +46,20 @@ impl Resize {
             return false;
         }
         self.checked_at = Instant::now();
-        let Ok(output) = Command::new("tmux")
-            .args([
+        let Ok(output) = run_tmux(
+            &[
                 "display-message",
                 "-p",
                 "-c",
                 &self.client,
                 "#{client_width} #{client_height}",
-            ])
-            .output()
-        else {
+            ],
+            "Could not read tmux client dimensions",
+        ) else {
             return false;
         };
-        let size = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        if !output.status.success() || size.is_empty() || size == self.opened_at_size {
+        let size = output.trim().to_owned();
+        if size.is_empty() || size == self.opened_at_size {
             self.candidate = None;
             return false;
         }

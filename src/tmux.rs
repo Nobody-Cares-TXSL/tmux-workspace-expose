@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::process::Command;
+use std::process::{Command, Output};
 
 use anyhow::{Context, Result, anyhow};
 
@@ -178,92 +178,60 @@ pub fn list_workspace_sessions() -> Result<Vec<Session>> {
 }
 
 fn list_session_metadata() -> Result<Vec<Session>> {
-    let output = Command::new("tmux")
-        .args(["list-sessions", "-F", SESSION_FORMAT])
-        .output()
-        .context("failed to run tmux list-sessions")?;
-
-    if !output.status.success() {
-        return Err(tmux_error("tmux list-sessions failed", &output.stderr));
-    }
-
-    parse_sessions_output(&String::from_utf8_lossy(&output.stdout))
+    let output = run_tmux(
+        &["list-sessions", "-F", SESSION_FORMAT],
+        "tmux list-sessions failed",
+    )?;
+    parse_sessions_output(&output)
 }
 
 pub fn write_agent_status(pane: &str, marker: Option<(&str, &str)>) -> Result<()> {
-    let mut tmux = Command::new("tmux");
-    if let Some((status, since)) = marker {
-        tmux.args(["set-option", "-p", "-t", pane, "@agent_status", status])
-            .args([
-                ";",
-                "set-option",
-                "-p",
-                "-t",
-                pane,
-                "@agent_status_since",
-                since,
-            ])
-            .args([
-                ";",
-                "set-option",
-                "-pF",
-                "-t",
-                pane,
-                "@agent_status_pane_pid",
-                "#{pane_pid}",
-            ]);
-    } else {
-        tmux.args(["set-option", "-pu", "-t", pane, "@agent_status"])
-            .args([";", "set-option", "-pu", "-t", pane, "@agent_status_since"])
-            .args([
-                ";",
-                "set-option",
-                "-pu",
-                "-t",
-                pane,
-                "@agent_status_pane_pid",
-            ]);
+    let options = [
+        ("@agent_status", marker.map(|(status, _)| status), "-p"),
+        ("@agent_status_since", marker.map(|(_, since)| since), "-p"),
+        (
+            "@agent_status_pane_pid",
+            marker.map(|_| "#{pane_pid}"),
+            "-pF",
+        ),
+    ];
+    let mut args = Vec::new();
+    for (option, value, set_flag) in options {
+        if !args.is_empty() {
+            args.push(";");
+        }
+        args.extend([
+            "set-option",
+            if value.is_some() { set_flag } else { "-pu" },
+            "-t",
+            pane,
+            option,
+        ]);
+        args.extend(value);
     }
-    let message = format!("failed to update agent status on tmux pane '{pane}'");
-    let output = tmux.output().with_context(|| message.clone())?;
-    if !output.status.success() {
-        return Err(tmux_error(&message, &output.stderr));
-    }
+    run_tmux(
+        &args,
+        &format!("failed to update agent status on tmux pane '{pane}'"),
+    )?;
     Ok(())
 }
 
 pub fn current_session_id() -> Result<Option<String>> {
-    let output = Command::new("tmux")
-        .args(["display-message", "-p", "#{session_id}"])
-        .output()
-        .context("failed to run tmux display-message")?;
-
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok((!id.is_empty()).then_some(id))
+    let output = tmux_output(
+        &["display-message", "-p", "#{session_id}"],
+        "failed to run tmux display-message",
+    )?;
+    let id = String::from_utf8_lossy(&output.stdout);
+    let id = id.trim();
+    Ok((output.status.success() && !id.is_empty()).then(|| id.to_owned()))
 }
 
 pub fn capture_pane_preview(pane_id: &str) -> Result<Vec<String>> {
-    Ok(capture_screen(pane_id)?
-        .lines()
-        .map(str::to_owned)
-        .collect())
-}
-
-fn capture_screen(target: &str) -> Result<String> {
-    let output = Command::new("tmux")
-        .args(["capture-pane", "-e", "-p", "-t", target])
-        .output()
-        .with_context(|| format!("failed to capture tmux pane '{target}'"))?;
-
-    if !output.status.success() {
-        return Err(tmux_error("tmux capture-pane failed", &output.stderr));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    let output = run_tmux(
+        &["capture-pane", "-e", "-p", "-t", pane_id],
+        &format!("failed to capture tmux pane '{pane_id}'"),
+    )?;
+    Ok(output.lines().map(str::to_owned).collect())
 }
 
 pub fn apply_workspace_action(action: crate::model::WorkspaceDialog) -> Result<()> {
@@ -279,53 +247,38 @@ pub fn apply_workspace_action(action: crate::model::WorkspaceDialog) -> Result<(
         (WorkspaceTarget::Session { id, .. }, Some(_)) => ("rename-session", id),
         (WorkspaceTarget::Window { id, .. }, Some(_)) => ("rename-window", id),
     };
-    let mut tmux = Command::new("tmux");
-    tmux.args([command, "-t", id]);
+    let mut args = vec![command, "-t", id];
+    let literal;
     if let Some(name) = name {
         if name.contains(WORKSPACE_SEPARATOR) {
             return Err(anyhow!("Name contains an unsupported character"));
         }
         // tmux expands formats in names and treats a final semicolon as a command separator.
-        let mut literal = name.replace('#', "##");
-        if literal.ends_with(';') {
-            literal.insert(literal.len() - 1, '\\');
+        let mut escaped = name.replace('#', "##");
+        if escaped.ends_with(';') {
+            escaped.insert(escaped.len() - 1, '\\');
         }
-        tmux.args(["--", &literal]);
+        literal = escaped;
+        args.extend(["--", &literal]);
     }
-    let output = tmux
-        .output()
-        .with_context(|| format!("{command} failed for {}", target.description()))?;
-    if !output.status.success() {
-        return Err(tmux_error(
-            &format!("{command} failed for {}", target.description()),
-            &output.stderr,
-        ));
-    }
+    run_tmux(
+        &args,
+        &format!("{command} failed for {}", target.description()),
+    )?;
     Ok(())
 }
 
-/// Like `switch_client`, but for a specific client. Commands run from a key
-/// binding via `run-shell` aren't attached to any client, so they have to
-/// name the one that pressed the key or tmux guesses.
+/// Switches the client that opened the popup.
 pub fn switch_client_for(client: Option<&str>, session_target: &str) -> Result<()> {
     let mut args = vec!["switch-client"];
     if let Some(client) = client {
         args.extend(["-c", client]);
     }
     args.extend(["-t", session_target]);
-
-    let output = Command::new("tmux")
-        .args(&args)
-        .output()
-        .with_context(|| format!("failed to switch to tmux session '{session_target}'"))?;
-
-    if !output.status.success() {
-        return Err(tmux_error(
-            &format!("tmux switch-client failed for '{session_target}'"),
-            &output.stderr,
-        ));
-    }
-
+    run_tmux(
+        &args,
+        &format!("tmux switch-client failed for '{session_target}'"),
+    )?;
     Ok(())
 }
 
@@ -377,14 +330,10 @@ fn list_workspace_rows() -> Result<Vec<WorkspaceRow>> {
 }
 
 fn list_pane_output(format: &str) -> Result<String> {
-    let output = Command::new("tmux")
-        .args(["list-panes", "-a", "-F", format])
-        .output()
-        .context("failed to run tmux list-panes")?;
-    if !output.status.success() {
-        return Err(tmux_error("tmux list-panes failed", &output.stderr));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    run_tmux(
+        &["list-panes", "-a", "-F", format],
+        "tmux list-panes failed",
+    )
 }
 
 /// Folds a session's panes down to one badge: the worst status present, and
@@ -462,6 +411,21 @@ fn parse_sessions_output(output: &str) -> Result<Vec<Session>> {
     }
 
     Ok(sessions)
+}
+
+pub(crate) fn tmux_output(args: &[&str], message: &str) -> Result<Output> {
+    Command::new("tmux")
+        .args(args)
+        .output()
+        .with_context(|| message.to_owned())
+}
+
+pub fn run_tmux(args: &[&str], message: &str) -> Result<String> {
+    let output = tmux_output(args, message)?;
+    if !output.status.success() {
+        return Err(tmux_error(message, &output.stderr));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn tmux_error(message: &str, stderr: &[u8]) -> anyhow::Error {
