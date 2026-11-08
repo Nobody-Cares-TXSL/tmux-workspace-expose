@@ -228,8 +228,34 @@ fn attach_workspace_rows(sessions: &mut [Session], rows: &[WorkspaceRow]) {
 }
 
 pub fn list_workspace_sessions() -> Result<Vec<Session>> {
-    let mut sessions = list_session_metadata()?;
-    let rows = list_workspace_rows()?;
+    let output = run_tmux(
+        &[
+            "list-sessions",
+            "-F",
+            SESSION_FORMAT,
+            ";",
+            "display-message",
+            "-p",
+            WORKSPACE_BOUNDARY.trim_end_matches('\n'),
+            ";",
+            "list-panes",
+            "-a",
+            "-F",
+            WORKSPACE_PANE_FORMAT,
+        ],
+        "tmux workspace query failed",
+    )?;
+    parse_workspace_snapshot(&output)
+}
+
+const WORKSPACE_BOUNDARY: &str = "\u{e000}tmux-expose-panes\u{e000}\n";
+
+fn parse_workspace_snapshot(output: &str) -> Result<Vec<Session>> {
+    let (sessions, panes) = output
+        .split_once(WORKSPACE_BOUNDARY)
+        .context("missing separator in tmux workspace snapshot")?;
+    let mut sessions = parse_sessions_output(sessions)?;
+    let rows = parse_workspace_rows(panes)?;
     attach_workspace_rows(&mut sessions, &rows);
     if sessions
         .iter()
@@ -238,14 +264,6 @@ pub fn list_workspace_sessions() -> Result<Vec<Session>> {
         return Err(anyhow!("tmux workspace topology changed during refresh"));
     }
     Ok(sessions)
-}
-
-fn list_session_metadata() -> Result<Vec<Session>> {
-    let output = run_tmux(
-        &["list-sessions", "-F", SESSION_FORMAT],
-        "tmux list-sessions failed",
-    )?;
-    parse_sessions_output(&output)
 }
 
 pub fn write_agent_status(pane: &str, marker: Option<(&str, &str)>) -> Result<()> {
@@ -372,17 +390,6 @@ pub fn parse_sessions(output: &str) -> Vec<Session> {
             Some(session_metadata(id, name, attached, window_count))
         })
         .collect()
-}
-
-fn list_workspace_rows() -> Result<Vec<WorkspaceRow>> {
-    parse_workspace_rows(&list_pane_output(WORKSPACE_PANE_FORMAT)?)
-}
-
-fn list_pane_output(format: &str) -> Result<String> {
-    run_tmux(
-        &["list-panes", "-a", "-F", format],
-        "tmux list-panes failed",
-    )
 }
 
 /// Folds a session's panes down to one badge: the worst status present, and
@@ -569,6 +576,19 @@ mod tests {
     fn rejects_partial_session_snapshots() {
         let output = "$1\u{e000}dev\u{e000}0\u{e000}1\ntruncated\n";
         assert!(parse_sessions_output(output).is_err());
+    }
+
+    #[test]
+    fn rejects_batched_workspace_output_with_missing_window_rows() {
+        let sessions = "$1\u{e000}dev\u{e000}0\u{e000}1\n";
+        assert!(parse_workspace_snapshot(sessions).is_err());
+        let output = format!("{sessions}{WORKSPACE_BOUNDARY}");
+        assert!(
+            parse_workspace_snapshot(&output)
+                .unwrap_err()
+                .to_string()
+                .contains("topology changed")
+        );
     }
 
     #[test]
