@@ -1,4 +1,4 @@
-use std::{env, fs, io, path::PathBuf, process::Command};
+use std::{env, fs, io, process::Command};
 
 use anyhow::{Result, bail};
 use ratatui::style::Color;
@@ -206,17 +206,8 @@ impl Default for Appearance {
 }
 
 impl Appearance {
-    fn path() -> io::Result<PathBuf> {
-        let home = env::var_os("XDG_CONFIG_HOME")
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No configuration directory"))?;
-        Ok(home.join("tmux-expose").join("appearance.conf"))
-    }
-
     pub fn load(mut fallback: Self) -> Result<Self> {
-        let data = match fs::read_to_string(Self::path()?) {
+        let data = match fs::read_to_string(crate::config::path("appearance.conf")?) {
             Ok(data) => data,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(fallback),
             Err(error) => return Err(error.into()),
@@ -406,7 +397,7 @@ impl Appearance {
     pub fn save(&self, previous: &Self) -> Result<()> {
         let lang = previous.language();
         self.validate_in(lang)?;
-        let path = Self::path()?;
+        let path = crate::config::path("appearance.conf")?;
         let prior = fs::read(&path).ok();
         let plugin = if self.0[..VIM_KEYS] != previous.0[..VIM_KEYS] {
             env::var_os("TMUX_EXPOSE_PLUGIN_PATH")

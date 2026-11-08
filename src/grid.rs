@@ -1,4 +1,4 @@
-use std::{env, fs, io, path::PathBuf};
+use std::{fs, io};
 
 use ratatui::layout::Rect;
 
@@ -50,17 +50,8 @@ impl Default for Settings {
 }
 
 impl Settings {
-    fn path() -> io::Result<PathBuf> {
-        let config = env::var_os("XDG_CONFIG_HOME")
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No configuration directory"))?;
-        Ok(config.join("tmux-expose").join("grid.conf"))
-    }
-
     pub fn load() -> io::Result<Self> {
-        let data = match fs::read_to_string(Self::path()?) {
+        let data = match fs::read_to_string(crate::config::path("grid.conf")?) {
             Ok(data) => data,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(error) => return Err(error),
@@ -116,7 +107,7 @@ impl Settings {
     }
 
     pub fn save(self) -> io::Result<()> {
-        let path = Self::path()?;
+        let path = crate::config::path("grid.conf")?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
