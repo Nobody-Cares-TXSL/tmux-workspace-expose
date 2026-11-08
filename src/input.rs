@@ -283,7 +283,7 @@ pub fn handle_mouse(
 ) {
     if let Some(draft) = &app.grid_edit {
         let area = Rect {
-            height: grid_area.height.saturating_add(1),
+            height: grid_area.height.saturating_add(ui::FOOTER_HEIGHT),
             ..grid_area
         };
         let fields = app.settings_page.fields();

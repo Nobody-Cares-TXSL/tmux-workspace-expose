@@ -15,7 +15,14 @@ use crate::{
 
 pub const MIN_CARD_WIDTH: u16 = 32;
 pub const MIN_CARD_HEIGHT: u16 = 10;
-const FOOTER_HEIGHT: u16 = 1;
+pub const FOOTER_HEIGHT: u16 = 1;
+
+pub fn grid_area(area: Rect) -> Rect {
+    Rect {
+        height: area.height.saturating_sub(FOOTER_HEIGHT),
+        ..area
+    }
+}
 
 /// Colors used to highlight session cards by state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

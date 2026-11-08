@@ -414,7 +414,7 @@ fn switch_selection(app: &App, client: Option<&str>) -> Result<bool> {
 
 fn current_grid_area(terminal: &Terminal<CrosstermBackend<io::Stdout>>) -> Result<Rect> {
     let area = terminal.size().context("failed to read terminal size")?;
-    Ok(Rect::new(0, 0, area.width, area.height.saturating_sub(1)))
+    Ok(ui::grid_area(Rect::new(0, 0, area.width, area.height)))
 }
 
 #[cfg(test)]
