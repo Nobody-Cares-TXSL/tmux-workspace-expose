@@ -30,10 +30,10 @@
 
 ```bash
 git clone https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose.git
-cargo install --locked --path ./tmux-workspace-expose
+cargo install --locked --force --path ./tmux-workspace-expose
 ```
 
-Cargo 包名为 `tmux-workspace-expose`，安装后的命令为 `tmux-expose`。确保 tmux 服务能从 `PATH` 找到它。
+Cargo 包名为 `tmux-workspace-expose`，安装后的命令为 `tmux-expose`。确保 tmux 服务能从 `PATH` 找到它。这里必须带 `--force`，因为该命令名与上游 `tmux-expose` crate 相同：从已有的上游安装迁移时，不带 `--force` 会报 `error: binary 'tmux-expose' already exists in destination`。
 
 ### 使用 TPM
 
@@ -43,7 +43,7 @@ Cargo 包名为 `tmux-workspace-expose`，安装后的命令为 `tmux-expose`。
 set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 ```
 
-重新加载 tmux 配置，按前缀键再按大写 `I` 安装插件，然后按 `Alt+e` 打开总览。TPM 会更新插件脚本。要同步更新二进制，请从更新后的项目目录运行 `cargo install --locked --path .`。
+重新加载 tmux 配置，按前缀键再按大写 `I` 安装插件，然后按 `Alt+e` 打开总览。TPM 会更新插件脚本。要同步更新二进制，请从更新后的项目目录运行 `cargo install --locked --force --path .`。
 
 ### 手动加载
 

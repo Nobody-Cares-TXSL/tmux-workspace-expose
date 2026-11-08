@@ -27,8 +27,10 @@ build-release:
 	cargo build --release
 
 # Install to ~/.cargo/bin
+# --force: the bin name tmux-expose collides with the upstream release, so a
+# plain install fails when an older binary already occupies ~/.cargo/bin.
 install:
-	cargo install --path . --locked
+	cargo install --force --path . --locked
 
 # Clean build artifacts
 clean:

@@ -30,10 +30,10 @@ You need Git, Bash, Cargo, and tmux. This project was tested with Alacritty and 
 
 ```bash
 git clone https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose.git
-cargo install --locked --path ./tmux-workspace-expose
+cargo install --locked --force --path ./tmux-workspace-expose
 ```
 
-The Cargo package is called `tmux-workspace-expose`. It installs a `tmux-expose` command that must be on the tmux server's `PATH`.
+The Cargo package is called `tmux-workspace-expose`. It installs a `tmux-expose` command that must be on the tmux server's `PATH`. The `--force` flag is needed because that command name is the same as the upstream `tmux-expose` crate's: without it, migrating from an existing upstream install fails with `error: binary 'tmux-expose' already exists in destination`.
 
 ### Install with TPM
 
@@ -43,7 +43,7 @@ Add this line to your tmux configuration if you use [TPM](https://github.com/tmu
 set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 ```
 
-Reload your tmux configuration, press the prefix key followed by uppercase `I`, then press `Alt+e` to open the overview. TPM updates the plugin script. To update the binary as well, run `cargo install --locked --path .` from the updated checkout.
+Reload your tmux configuration, press the prefix key followed by uppercase `I`, then press `Alt+e` to open the overview. TPM updates the plugin script. To update the binary as well, run `cargo install --locked --force --path .` from the updated checkout.
 
 ### Load manually
 
