@@ -21,7 +21,7 @@ use tmux_expose::{
     },
     grid::Settings,
     input,
-    model::{self, AgentStatus, App},
+    model::{self, AgentStatus, App, Session},
     preview::{PreviewCache, RefreshPolicy},
     tmux, ui,
 };
@@ -158,16 +158,8 @@ fn main() -> Result<()> {
     let agent_sort = appearance.0[AGENT_SORT] == "on";
     let mut app = match tmux::list_workspace_sessions() {
         Ok(mut sessions) => {
-            let current_session_name = sessions
-                .iter()
-                .find(|session| Some(session.id.as_str()) == current_session_id.as_deref())
-                .map(|session| session.name.clone());
-            if agent_sort {
-                model::sort_sessions_by_agent_status_with_current(
-                    &mut sessions,
-                    current_session_name.as_deref(),
-                );
-            }
+            let current_session_name =
+                order_sessions(&mut sessions, current_session_id.as_deref(), agent_sort);
             let mut app = App::new(sessions, current_session_name);
             if agent_sort {
                 app.select_most_urgent_agent_session();
@@ -269,18 +261,13 @@ fn main() -> Result<()> {
         if refresh_topology {
             match tmux::list_workspace_sessions() {
                 Ok(mut sessions) => {
-                    app.current_session_name = sessions
-                        .iter()
-                        .find(|session| Some(session.id.as_str()) == current_session_id.as_deref())
-                        .map(|session| session.name.clone());
+                    app.current_session_name = order_sessions(
+                        &mut sessions,
+                        current_session_id.as_deref(),
+                        app.appearance.0[AGENT_SORT] == "on",
+                    );
                     topology_available = true;
                     previews.reconcile(&sessions);
-                    if app.appearance.0[AGENT_SORT] == "on" {
-                        model::sort_sessions_by_agent_status_with_current(
-                            &mut sessions,
-                            app.current_session_name.as_deref(),
-                        );
-                    }
                     app.replace_sessions(sessions);
                     app.error = None;
                 }
@@ -321,6 +308,21 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn order_sessions(
+    sessions: &mut [Session],
+    current_id: Option<&str>,
+    sort_agents: bool,
+) -> Option<String> {
+    let current_name = sessions
+        .iter()
+        .find(|session| Some(session.id.as_str()) == current_id)
+        .map(|session| session.name.clone());
+    if sort_agents {
+        model::sort_sessions_by_agent_status_with_current(sessions, current_name.as_deref());
+    }
+    current_name
 }
 
 fn configured_appearance(cli: &Cli) -> Appearance {
