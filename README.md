@@ -1,73 +1,93 @@
-# tmux-workspace-expose
+<div align="center">
+  <h1>tmux-workspace-expose</h1>
+  <p><strong>See your tmux workspace before you switch.</strong></p>
+  <p>
+    English · <a href="README.zh-CN.md">简体中文</a>
+  </p>
+  <p>
+    <a href="#quick-start">Quick start</a> ·
+    <a href="#keyboard-shortcuts">Shortcuts</a> ·
+    <a href="#settings">Settings</a> ·
+    <a href="#agent-status">Agent status</a>
+  </p>
+</div>
 
-用卡片浏览 tmux 的 Session、Window 和 Pane。在切换前就能看见窗口的内容、分屏位置，以及哪些 Agent 正在等你处理。
+![Live demo of the tmux workspace overview and settings](assets/recording.gif)
 
-![tmux-workspace-expose 实机演示](assets/recording.gif)
+[Overview screenshot](assets/screenshot.png) · [Settings screenshot](assets/custom-example.png)
 
-[总览截图](assets/screenshot.png) · [设置截图](assets/custom-example.png)
+## What you can do
 
-## 功能概览
+- **Browse sessions and windows.** Press `Alt+e` to see all sessions and their window thumbnails, or `Alt+w` to open the current session's window overview. Each window card shows pane previews in their actual split layout.
+- **Set your grid size.** Limit the rows and columns for session and window cards independently. Use the arrow keys or mouse wheel to reach cards beyond the first screen.
+- **Manage your workspace.** Fuzzy-search sessions, rename a session or window, or close one after confirmation.
+- **Customize the interface.** Switch between Simplified Chinese and English, and adjust the grid, popup, colors, and refresh intervals.
+- **See which agents need you.** Session cards show agents that are working, waiting, or need attention. You can bring sessions that need input to the front.
 
-- **Session 总览**显示每个 Session 及其 Window 缩略图。进入 **Window 总览**后，每张卡片都显示 Pane 的可见画面和分屏线。
-- **可滚动网格**分别限制 Session 和 Window 每屏显示的行数、列数。超出一屏时可用方向键或鼠标滚轮查看。
-- **工作区管理**支持模糊搜索、重命名、确认关闭，以及一键直达当前 Session 的 Window 总览。
-- **中英文界面**可以在设置里切换，弹窗布局、配色、刷新和 Agent 排序也能直接修改。
-- **Agent 状态**可在卡片上显示运行、等待和需要处理的状态，并把需要关注的会话排到前面。
+## Quick start
 
-## 安装
-
-需要 Bash、Cargo 和 tmux。本项目在 Linux 的 Alacritty 和 tmux 3.4 上验证过。
+You need Git, Bash, Cargo, and tmux. This project was tested with Alacritty and tmux 3.4 on Linux.
 
 ```bash
 git clone https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose.git
 cargo install --locked --path ./tmux-workspace-expose
 ```
 
-Cargo 包名为 `tmux-workspace-expose`，安装后的命令为 `tmux-expose`。确保 tmux 服务能从 PATH 找到它。使用 [TPM](https://github.com/tmux-plugins/tpm) 时，在 tmux 配置中加入：
+The Cargo package is called `tmux-workspace-expose`. It installs a `tmux-expose` command that must be on the tmux server's `PATH`.
+
+### Install with TPM
+
+Add this line to your tmux configuration if you use [TPM](https://github.com/tmux-plugins/tpm). Replace your `cesarferreira/tmux.expose` entry if you already use the original plugin.
 
 ```tmux
 set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 ```
 
-重新加载配置后，按 tmux 前缀键再按大写 `I` 安装插件。已有上游插件配置时，替换原来的 `cesarferreira/tmux.expose` 项。
+Reload your tmux configuration, press the prefix key followed by uppercase `I`, then press `Alt+e` to open the overview. TPM updates the plugin script. To update the binary as well, run `cargo install --locked --path .` from the updated checkout.
 
-更新时，TPM 会更新插件脚本。要同步更新 `tmux-expose` 二进制，请从更新后的项目目录再次运行 `cargo install --locked --path .`。
+### Load manually
 
-手动加载时，用下面的方式执行克隆目录中的插件脚本，并把示例路径改成实际位置：
+Add this line to your tmux configuration and substitute your checkout path.
 
 ```tmux
 run-shell 'bash ~/src/tmux-workspace-expose/tmux.expose.tmux'
 ```
 
-如果 tmux 找不到二进制，可在加载插件前指定路径：
+If tmux cannot find the binary, set its path before loading the plugin.
 
 ```tmux
 set -g @tmux-expose-command '~/.cargo/bin/tmux-expose'
 ```
 
-## 快捷键
+## Keyboard shortcuts
 
-| 按键 | 动作 |
+| Key | Action |
 | --- | --- |
-| `Alt+e` | 打开 Session 总览，默认再次按下关闭弹窗 |
-| `Alt+w` | 直接打开当前 Session 的 Window 总览 |
-| `Ctrl+,` / `Shift+F12` | 打开设置 |
-| 方向键 / 鼠标滚轮 | 选择卡片、逐行滚动 |
-| `Tab` / `Shift+Tab` | 在 Window 总览中向前或向后选择 |
-| `Enter` | 进入选中的 Session，或切换到选中的 Window |
-| `q` | 浏览时关闭弹窗 |
-| `Esc` | 返回 Session 总览，或取消当前输入 |
-| `/` | 开始模糊搜索 Session |
-| `r` | 重命名选中的 Session 或 Window，按 `Enter` 保存 |
-| `d` | 显示关闭确认，按 `Enter` 关闭，按 `Esc` 取消 |
+| `Alt+e` | Open the session overview. Press again to close the popup with the default binding. |
+| `Alt+w` | Open the window overview for the current session. |
+| `Ctrl+,` / `Shift+F12` | Open settings. |
+| Arrow keys | Move the selection. |
+| Mouse wheel | Scroll by row. |
+| Left click | Select a session or window card. Press `Enter` to open or switch to it. |
+| `Tab` / `Shift+Tab` | Move to the next or previous window card. |
+| `Enter` | Open the selected session or switch to the selected window. |
+| `q` | Close the popup while browsing. |
+| `Ctrl+C` | Quit without switching. |
+| `Esc` | Return from the window overview, cancel a dialog or settings edit, or clear the current session filter. |
+| `/` then type | Filter sessions by fuzzy name. For example, `pf` can match `project-frontend`. |
+| `Backspace` while searching | Delete the last character. |
+| `Ctrl+W` while searching | Delete the previous word. |
+| `Ctrl+U` while searching | Clear the query and keep editing. |
+| `r` | Rename the selected session or window. Press `Enter` to save. |
+| `d` | Open a close confirmation. Press `Enter` to close or `Esc` to cancel. |
 
-在搜索框输入 `pf` 可以匹配 `project-frontend`。开启 Vim 导航时，用 `hjkl` 移动；搜索时按 `Esc` 会结束编辑并保留筛选结果。
+With Vim navigation enabled, use `hjkl` to move. While editing a nonempty search, the first `Esc` stops editing and keeps the filter. Press `Esc` again in the session overview to clear it.
 
-如果同一个 Window 链接到了多个 Session，关闭它会移除所有链接。
+Closing a window linked to multiple sessions removes it from all of them.
 
-### Alacritty 的 Ctrl+, 映射
+### Map Ctrl+, in Alacritty
 
-tmux 3.4 可直接用 `Shift+F12` 打开设置。如需在 Alacritty 使用 `Ctrl+,`，在 `alacritty.toml` 中加入：
+With tmux 3.4, `Shift+F12` opens settings directly. To use `Ctrl+,` in Alacritty, add this binding to `alacritty.toml`.
 
 ```toml
 [[keyboard.bindings]]
@@ -76,78 +96,117 @@ mods = "Control"
 chars = "\u001B[24;2~"
 ```
 
-## 设置项与取值
+## Settings
 
-打开设置后，按 `Tab` 或点击页签切换页面，用 `↑` / `↓` 或鼠标选中字段。可以直接输入，也可以用 `←` / `→` 调整。按 `Enter` 保存，按 `Esc` 放弃修改。
+Press `Tab` or click a tab to switch settings pages. Select a field with the mouse or `↑` / `↓`. Type a value or adjust it with `←` / `→`. Press `Enter` to save or `Esc` to discard changes.
 
-### 网格
+### Grid
 
-| 设置项 | 取值 / 默认 | 作用 |
+| Setting | Values / Default | What it changes |
 | --- | --- | --- |
-| Session 列数 | 1–12 / 2 | 总览每行最多显示多少张 Session 卡片。 |
-| Session 行数 | 1–12 / 2 | 总览一屏最多显示几行。 |
-| Window 列数 | 1–12 / 2 | Window 卡片每行的上限，Session 卡片里的缩略图也使用这个上限。 |
-| Window 行数 | 1–12 / 2 | Window 卡片每屏的行数上限。 |
-| 卡片间距 | 0–3 / 1 | 相邻卡片之间留多少终端字符格。 |
+| Session columns | 1–12 / 2 | Maximum number of session cards per row. |
+| Session rows | 1–12 / 2 | Maximum number of session rows per screen. |
+| Window columns | 1–12 / 2 | Maximum number of window cards per row. The same limit applies to thumbnails inside session cards. |
+| Window rows | 1–12 / 2 | Maximum number of window rows per screen. |
+| Card gap | 0–3 / 1 | Number of terminal cells between cards. |
 
-例如 Session 设为 2 列、2 行时，一屏最多显示 4 张卡片。终端过窄或过矮时，一屏会显示更少，剩余卡片仍可滚动查看。
+A two-column, two-row session grid fits up to four cards per screen. Smaller terminals may fit fewer cards. Scroll to see the rest.
 
-### 弹窗
+### Popup
 
-| 设置项 | 取值 / 默认 | 作用 |
+| Setting | Values / Default | What it changes |
 | --- | --- | --- |
-| 启动键 | `M-e` | 打开 Session 总览的按键。`M-` 表示 Alt，`C-` 表示 Ctrl。`prefix` 按键表也可用单个字母。`M-w` 和 `C-c` 保留。 |
-| 按键表 | `root`、`prefix` / `root` | `root` 直接按键，`prefix` 先按 tmux 前缀键。 |
-| 宽度 | 1–100% 或 1–1000 个字符格 / `100%` | 决定弹窗横向占用的空间，例如 `80%`。 |
-| 高度 | 1–100% 或 1–1000 个字符格 / `100%` | 决定弹窗纵向占用的空间。 |
-| 停靠 | `center`、`top`、`bottom`、`left`、`right` / `center` | 决定弹窗居中或靠哪一边。 |
-| 弹窗背景 | 颜色或 `default` / `default` | 设置 tmux 弹窗的背景。 |
-| 弹窗边框 | 颜色或 `default` / `default` | 设置 tmux 弹窗外框的颜色。 |
-| Vim 导航 | `on`、`off` / `off` | 开启后支持 `hjkl` 和保留筛选的搜索模式。 |
+| Launch key | `M-e` | Key that opens the session overview. `M-` means Alt and `C-` means Ctrl. The `prefix` key table also accepts a single letter. `M-w` and `C-c` are reserved. |
+| Key table | `root`, `prefix` / `root` | `root` uses the key directly. `prefix` requires the tmux prefix first. |
+| Width | 1–100% or 1–1000 cells / `100%` | Popup width, for example `80%`. |
+| Height | 1–100% or 1–1000 cells / `100%` | Popup height. |
+| Anchor | `center`, `top`, `bottom`, `left`, `right` / `center` | Places the popup in the center or along an edge. |
+| Popup background | Color or `default` / `default` | Background color of the tmux popup. |
+| Popup border | Color or `default` / `default` | Border color of the tmux popup. |
+| Vim navigation | `on`, `off` / `off` | Enables `hjkl` navigation and keeps the filter when leaving search input. |
 
-宽高、停靠、背景和边框在下次打开弹窗时生效。独立的设置快捷键始终打开全尺寸设置页，方便把过小的尺寸改回来。
+Size, anchor, and popup colors take effect the next time the popup opens. The dedicated settings shortcut always opens a full-size popup, so you can recover from an overly small size.
 
-### 配色
+### Colors
 
-颜色可以输入名称、`colour0` 到 `colour255`，或 `#RRGGBB`。
+Use a color name, `colour0` through `colour255`, or `#RRGGBB`.
 
-| 设置项 | 默认 | 作用 |
+| Setting | Default | What it changes |
 | --- | --- | --- |
-| 选中卡片 | `yellow` | 当前选中项的高亮颜色。 |
-| 当前 Session | `green` | 当前连接的 Session 卡片颜色。 |
-| 普通卡片 | `white` | 其他 Session 卡片的标题颜色。 |
-| Agent 需处理 | `#ff5555` | Agent 遇到需要人工处理事项时的标记颜色。 |
-| Agent 等待 | `#ffb86c` | Agent 等待回复时的标记颜色。 |
-| Agent 运行中 | `#8be9fd` | Agent 工作时的标记颜色。 |
+| Selected card | `yellow` | Highlight for the selected card. |
+| Current session | `green` | Color of the session you are attached to. |
+| Regular card | `white` | Title color for other session cards. |
+| Agent needs attention | `#ff5555` | Badge color for an agent that needs you to act. |
+| Agent waiting | `#ffb86c` | Badge color for an agent waiting for input. |
+| Agent working | `#8be9fd` | Badge color for an agent working on a task. |
 
-### 行为
+### Behavior
 
-| 设置项 | 取值 / 默认 | 作用 |
+| Setting | Values / Default | What it changes |
 | --- | --- | --- |
-| 界面语言 | `zh`、`en` / `zh` | 切换简体中文或英文，保存后立即更新。 |
-| Agent 优先排序 | `on`、`off` / `on` | `on` 把需要处理或等待回复的 Session 排到前面，`off` 保留 tmux 的列表顺序。Agent 标记仍会显示。 |
-| 布局刷新 | 1–60000 毫秒 / `1500` | 多久重新读取 Session、Window、Pane 的结构和 Agent 状态。 |
-| 后台 Pane 刷新 | 1–60000 毫秒 / `1500` | 未选中 Session 的 Pane 预览多久更新一次。 |
-| 活跃 Pane 刷新 | 1–60000 毫秒 / `300` | 当前选中 Window 的活跃 Pane 预览多久更新一次。 |
-| 每批最多抓取 | 1–32 / `4` | 一批最多同时抓取多少个 Pane 的画面。 |
+| Interface language | `zh`, `en` / `zh` | Switches between Simplified Chinese and English as soon as you save. |
+| Agent priority sorting | `on`, `off` / `on` | `on` puts sessions that need attention or input first. `off` keeps the tmux list order. Badges still appear. |
+| Layout refresh | 1–60000 ms / `1500` | How often the app reads the session, window, and pane layout and agent statuses. |
+| Background pane refresh | 1–60000 ms / `1500` | How often pane previews refresh in unselected sessions. |
+| Active pane refresh | 1–60000 ms / `300` | How often the active pane preview refreshes in the selected window. |
+| Max captures per batch | 1–32 / `4` | Maximum number of pane previews captured in parallel per batch. |
 
-网格设置保存在 `$XDG_CONFIG_HOME/tmux-expose/grid.conf`，其余保存在同目录下的 `appearance.conf`。未设置 `XDG_CONFIG_HOME` 时使用 `~/.config`。已保存的值优先于对应的启动参数；`--columns` 仍可覆盖当次启动的 Session 列数。
+Grid settings live in `$XDG_CONFIG_HOME/tmux-expose/grid.conf`. Other settings live in `appearance.conf` in the same directory. If `XDG_CONFIG_HOME` is unset, the base directory is `~/.config`. Saved settings take precedence over the corresponding startup options. `--columns` can still override the session column count for one launch.
 
-终端缩放后，弹窗会按新尺寸打开并恢复选中项。读取布局或画面失败时，插件会保留可用的预览并重试。
+When the terminal resizes, the popup reopens at the new size and restores the selected item. If a layout read or pane capture fails, the plugin keeps the available previews and retries.
 
-## Agent 状态提醒
+## Agent status
 
-在对应 Pane 中运行以下命令可以手动标记。需要自动更新时，由 Agent 的 hook 调用相应命令。
+Status is recorded on the tmux pane that runs the command and summarized in the session overview. Run these commands manually or let an agent hook update the badge.
 
-```bash
-tmux-expose agent-status working
-tmux-expose agent-status waiting
-tmux-expose agent-status attention
-tmux-expose agent-status clear
+| Command | Status |
+| --- | --- |
+| `tmux-expose agent-status working` | The agent is working on a task. |
+| `tmux-expose agent-status waiting` | The turn ended and the agent is waiting for your next prompt. |
+| `tmux-expose agent-status attention` | The agent is waiting for permission or another action. |
+| `tmux-expose agent-status clear` | Clear the status on this pane. |
+
+For example, set a pane to `waiting` and press `Alt+e`. The session card will show the waiting badge.
+
+### Claude Code setup
+
+Add this to `~/.claude/settings.json` for all projects or to a project's `.claude/settings.json` for that project. If you already have a `hooks` block, append the entries below to the matching event arrays and keep your existing hooks.
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status working" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status waiting" }] }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [{ "type": "command", "command": "tmux-expose agent-status working" }]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [{ "type": "command", "command": "tmux-expose agent-status clear" }]
+      }
+    ]
+  }
+}
 ```
 
-例如，在一个 Pane 里标记 `waiting`，再按 `Alt+e`，对应的 Session 卡片会提示它在等待回复。处理完后，在原 Pane 运行 `tmux-expose agent-status clear` 清除标记。`attention` 适合权限确认、缺少输入等需要人介入的事件。Agent 状态由显式命令写入，插件不会从终端文本猜测状态。
+Restart Claude Code or start a new session inside tmux, then run `/hooks` to verify the five events. Check that `tmux-expose --version` runs in the same terminal. If you installed the binary to a custom path, replace `tmux-expose` in the example with the executable's absolute path. [Claude Code hooks reference](https://code.claude.com/docs/en/hooks)
 
-## 来源与许可证
+For other agents, run the same `tmux-expose agent-status <status>` commands from an available hook, lifecycle script, or wrapper in the corresponding tmux pane.
 
-本项目基于 Cesar Ferreira 的 [tmux.expose](https://github.com/cesarferreira/tmux.expose) 二次开发，保留上游版权声明和 [MIT 许可证](LICENSE)。
+## Credits and license
+
+Based on Cesar Ferreira's [tmux.expose](https://github.com/cesarferreira/tmux.expose). This project retains the original copyright notice and [MIT license](LICENSE).
