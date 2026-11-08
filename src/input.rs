@@ -1,7 +1,7 @@
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 
 use crate::{
     appearance::Page,
@@ -281,6 +281,7 @@ pub fn handle_mouse(
     grid_area: Rect,
     forced_columns: Option<usize>,
 ) {
+    let position = Position::new(mouse.column, mouse.row);
     if app.grid_edit.is_some() {
         let area = Rect {
             height: grid_area.height.saturating_add(ui::FOOTER_HEIGHT),
@@ -290,9 +291,7 @@ pub fn handle_mouse(
         let selected = app.settings_field();
         let (panel, rows) = ui::settings_panel(area, selected, fields);
         let inner = panel.inner(ratatui::layout::Margin::new(1, 1));
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-            && contains(inner, mouse.column, mouse.row)
-        {
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) && inner.contains(position) {
             let row = usize::from(mouse.row - inner.y);
             if row == 0 {
                 if let Some(page) =
@@ -335,10 +334,7 @@ pub fn handle_mouse(
     }
 
     let cards = ui::session_cards(app, grid_area, forced_columns);
-    if let Some((index, card)) = cards
-        .into_iter()
-        .find(|(_, card)| contains(*card, mouse.column, mouse.row))
-    {
+    if let Some((index, card)) = cards.into_iter().find(|(_, card)| card.contains(position)) {
         app.selected_index = index;
         if app.focus == Focus::Session
             && let Some(id) = ui::window_at(app, card, mouse.column, mouse.row)
@@ -346,13 +342,6 @@ pub fn handle_mouse(
             app.select_window(id);
         }
     }
-}
-
-fn contains(area: Rect, x: u16, y: u16) -> bool {
-    x >= area.x
-        && x < area.x.saturating_add(area.width)
-        && y >= area.y
-        && y < area.y.saturating_add(area.height)
 }
 
 /// Keys the search filter accepts as text input — matching the `Char` arm in
