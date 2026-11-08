@@ -458,7 +458,7 @@ fn switch_selection(app: &App, client: Option<&str>) -> Result<bool> {
     let Some(window) = app.selected_window() else {
         return Ok(false);
     };
-    tmux::switch_client_for(client, &format!("{}:{}", session.id, window.id))?;
+    tmux::switch_client_for(client, &format!("{}:{}", session.id, window.index))?;
     Ok(true)
 }
 

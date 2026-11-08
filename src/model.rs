@@ -141,7 +141,7 @@ pub struct App {
     pub grid_error: Option<String>,
     pub session_row: usize,
     pub window_row: usize,
-    window_selection: Option<String>,
+    window_selection: Option<(String, Option<u32>)>,
     search_query: Option<String>,
     /// True while actively typing a query. In vim mode this is distinct from
     /// `search_query` being set: Esc leaves editing (so hjkl moves again) but
@@ -213,7 +213,11 @@ impl App {
     }
 
     pub fn select_window(&mut self, window_id: String) {
-        self.window_selection = Some(window_id);
+        self.window_selection = Some((window_id, None));
+    }
+
+    pub(crate) fn select_window_link(&mut self, window_id: String, index: u32) {
+        self.window_selection = Some((window_id, Some(index)));
     }
 
     pub fn selected_window_index(&self) -> usize {
@@ -224,7 +228,16 @@ impl App {
     pub(crate) fn window_index(&self, session: &Session) -> usize {
         self.window_selection
             .as_ref()
-            .and_then(|id| session.windows.iter().position(|window| &window.id == id))
+            .and_then(|(id, index)| {
+                index
+                    .and_then(|index| {
+                        session
+                            .windows
+                            .iter()
+                            .position(|window| &window.id == id && window.index == index)
+                    })
+                    .or_else(|| session.windows.iter().position(|window| &window.id == id))
+            })
             .or_else(|| session.windows.iter().position(|window| window.active))
             .unwrap_or(0)
     }
@@ -242,7 +255,8 @@ impl App {
         } else {
             return;
         };
-        self.select_window(session.windows[next].id.clone());
+        let window = &session.windows[next];
+        self.select_window_link(window.id.clone(), window.index);
     }
 
     pub fn cycle_window(&mut self, backward: bool) {
@@ -255,7 +269,8 @@ impl App {
         let windows = &session.windows;
         let index = self.selected_window_index();
         let step = if backward { windows.len() - 1 } else { 1 };
-        self.select_window(windows[(index + step) % windows.len()].id.clone());
+        let window = &windows[(index + step) % windows.len()];
+        self.select_window_link(window.id.clone(), window.index);
     }
 
     pub fn open_session_detail(&mut self) {
@@ -420,9 +435,10 @@ impl App {
         let session = self
             .selected_session()
             .map_or("-", |session| session.id.as_str());
-        let window = self
-            .selected_window()
-            .map_or("-", |window| window.id.as_str());
+        let window = self.selected_window().map_or_else(
+            || "-".into(),
+            |window| format!("{}:{}", window.id, window.index),
+        );
         let edit = self
             .grid_edit
             .as_ref()
@@ -477,7 +493,14 @@ impl App {
         });
         if index.is_some() && *detail == "1" {
             self.focus = Focus::Session;
-            self.select_window((*window).to_owned());
+            if let Some((id, index)) = window
+                .split_once(':')
+                .and_then(|(id, index)| index.parse().ok().map(|index| (id, index)))
+            {
+                self.select_window_link(id.to_owned(), index);
+            } else {
+                self.select_window((*window).to_owned());
+            }
         }
         self.session_row = session_row.parse().unwrap_or(0);
         self.window_row = window_row.parse().unwrap_or(0);

@@ -709,7 +709,7 @@ struct WindowTile<'a> {
 fn workspace_layout<'a>(
     session: &'a Session,
     card: Rect,
-    selected: Option<&str>,
+    selected: Option<u32>,
     settings: Settings,
     first: usize,
 ) -> Vec<WindowTile<'a>> {
@@ -720,7 +720,7 @@ fn workspace_layout<'a>(
     }
     let selected_index = windows
         .iter()
-        .position(|window| selected == Some(window.id.as_str()))
+        .position(|window| selected == Some(window.index))
         .unwrap_or(0);
     let viewport = window_viewport(card, settings.windows, windows.len(), selected_index, first);
     window_tiles(session, card, viewport, settings.gap, selected.is_some())
@@ -828,12 +828,16 @@ fn compact_panes(window: &WindowPreview, area: Rect) -> Vec<(&PanePreview, Rect)
 }
 
 pub fn window_at(app: &App, card: Rect, x: u16, y: u16) -> Option<String> {
+    window_link_at(app, card, x, y).map(|window| window.id.clone())
+}
+
+pub(crate) fn window_link_at(app: &App, card: Rect, x: u16, y: u16) -> Option<&WindowPreview> {
     let session = app.selected_session()?;
-    let selected = app.selected_window().map(|window| window.id.as_str());
+    let selected = app.selected_window().map(|window| window.index);
     workspace_layout(session, card, selected, app.grid, app.window_row)
         .into_iter()
         .find(|tile| tile.area.contains((x, y).into()))
-        .map(|tile| tile.window.id.clone())
+        .map(|tile| tile.window)
 }
 
 fn render_workspace_card(
@@ -860,7 +864,7 @@ fn render_workspace_card(
                 }
             )
         );
-        let is_selected = selected.is_some_and(|target| target.id == window.id);
+        let is_selected = selected.is_some_and(|target| target.index == window.index);
         let border_color = if is_selected {
             selection_color
         } else if window.active {
@@ -1268,10 +1272,10 @@ mod tests {
         assert_eq!(layout[1].panes[0].1, Rect::new(32, 6, 18, 10));
 
         let area = Rect::new(0, 0, 100, 24);
-        let detail = workspace_layout(&session, area, Some("@0"), settings, 0);
+        let detail = workspace_layout(&session, area, Some(0), settings, 0);
         assert!(detail[0].screen);
         assert!(detail[1].screen);
-        let next = workspace_layout(&session, area, Some("@1"), settings, 0);
+        let next = workspace_layout(&session, area, Some(1), settings, 0);
         assert_eq!(detail[0].panes, next[0].panes);
         assert_eq!(detail[0].screen, next[0].screen);
         assert_eq!(detail[0].area.right() + 1, detail[1].area.left());

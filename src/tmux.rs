@@ -190,6 +190,7 @@ fn attach_workspace_rows(sessions: &mut [Session], rows: &[WorkspaceRow]) {
         .collect();
     let mut window_indices = HashMap::new();
     let mut panes = HashSet::new();
+    let mut agent_panes = HashSet::new();
     let mut agents = HashMap::<_, AgentAggregate>::new();
 
     for row in rows {
@@ -197,14 +198,16 @@ fn attach_workspace_rows(sessions: &mut [Session], rows: &[WorkspaceRow]) {
             continue;
         };
         let session = &mut sessions[session_index];
-        if let Some(status) = row.agent_status {
+        if let Some(status) = row.agent_status
+            && agent_panes.insert((session_index, row.pane.id.as_str()))
+        {
             agents
                 .entry(session_index)
                 .or_default()
                 .record(status, row.agent_status_since);
         }
         let window_index = *window_indices
-            .entry((session_index, row.window.id.as_str()))
+            .entry((session_index, row.window.index))
             .or_insert_with(|| {
                 let index = session.windows.len();
                 session.windows.push(row.window.clone());
@@ -586,6 +589,27 @@ mod tests {
                 .to_string()
                 .contains("topology changed")
         );
+    }
+
+    #[test]
+    fn preserves_multiple_links_to_one_window_without_counting_the_agent_twice() {
+        let row = "$1\u{e000}@7\u{e000}0\u{e000}dev\u{e000}80\u{e000}24\u{e000}1\u{e000}%3\u{e000}0\u{e000}0\u{e000}0\u{e000}80\u{e000}24\u{e000}1\u{e000}zsh\u{e000}waiting\u{e000}100\u{e000}\u{e000}0";
+        let alias = row.replacen("@7\u{e000}0", "@7\u{e000}3", 1);
+        let output = format!("$1\u{e000}dev\u{e000}0\u{e000}2\n{WORKSPACE_BOUNDARY}{row}\n{alias}");
+
+        let sessions = parse_workspace_snapshot(&output).unwrap();
+        let session = &sessions[0];
+        let mut app = crate::model::App::new(sessions.clone(), None);
+        app.open_session_detail();
+        app.cycle_window(false);
+        let saved = app.popup_state();
+        app.cycle_window(false);
+        app.restore_popup_state(&saved);
+
+        assert_eq!(session.windows[0].index, 0);
+        assert_eq!(session.windows[1].index, 3);
+        assert_eq!(session.agent_pane_counts.waiting, 1);
+        assert_eq!(app.selected_window().unwrap().index, 3);
     }
 
     #[test]

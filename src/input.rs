@@ -336,9 +336,9 @@ pub fn handle_mouse(
     if let Some((index, card)) = cards.into_iter().find(|(_, card)| card.contains(position)) {
         app.selected_index = index;
         if app.focus == Focus::Session
-            && let Some(id) = ui::window_at(app, card, mouse.column, mouse.row)
+            && let Some(window) = ui::window_link_at(app, card, mouse.column, mouse.row)
         {
-            app.select_window(id);
+            app.select_window_link(window.id.clone(), window.index);
         }
     }
 }
