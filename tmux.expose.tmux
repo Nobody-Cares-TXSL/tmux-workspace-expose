@@ -26,12 +26,6 @@ height="$(tmux show-option -gqv @tmux-expose-height)"
 anchor="$(tmux show-option -gqv @tmux-expose-anchor)"
 style="$(tmux show-option -gqv @tmux-expose-style)"
 border_style="$(tmux show-option -gqv @tmux-expose-border-style)"
-selected_color="$(tmux show-option -gqv @tmux-expose-selected-color)"
-attached_color="$(tmux show-option -gqv @tmux-expose-attached-color)"
-inactive_color="$(tmux show-option -gqv @tmux-expose-inactive-color)"
-attention_color="$(tmux show-option -gqv @tmux-expose-attention-color)"
-waiting_color="$(tmux show-option -gqv @tmux-expose-waiting-color)"
-working_color="$(tmux show-option -gqv @tmux-expose-working-color)"
 agent_sort="$(tmux show-option -gqv @tmux-expose-agent-sort)"
 vim_keys="$(tmux show-option -gqv @tmux-expose-vim-keys)"
 command="$(tmux show-option -gqv @tmux-expose-command)"
@@ -61,39 +55,14 @@ if [[ -r "${appearance_file}" ]]; then
   done < "${appearance_file}"
 fi
 command="${command:-tmux-expose}"
-for option in topology-refresh pane-refresh active-pane-refresh max-captures; do
+# Quote options for the popup shell command, including colors beginning with '#'.
+for option in topology-refresh pane-refresh active-pane-refresh max-captures \
+  selected-color attached-color inactive-color attention-color waiting-color working-color; do
   value="$(tmux show-option -gqv "@tmux-expose-${option}")"
   if [[ -n "${value}" ]]; then
     command="${command} --${option} $(printf '%q' "${value}")"
   fi
 done
-
-# Shell-escape color values before splicing them into the -E command string.
-# tmux runs that string through the shell, where an unquoted hex value such as
-# "#ff8700" would otherwise be swallowed as a comment.
-if [[ -n "${selected_color}" ]]; then
-  command="${command} --selected-color $(printf '%q' "${selected_color}")"
-fi
-
-if [[ -n "${attached_color}" ]]; then
-  command="${command} --attached-color $(printf '%q' "${attached_color}")"
-fi
-
-if [[ -n "${inactive_color}" ]]; then
-  command="${command} --inactive-color $(printf '%q' "${inactive_color}")"
-fi
-
-if [[ -n "${attention_color}" ]]; then
-  command="${command} --attention-color $(printf '%q' "${attention_color}")"
-fi
-
-if [[ -n "${waiting_color}" ]]; then
-  command="${command} --waiting-color $(printf '%q' "${waiting_color}")"
-fi
-
-if [[ -n "${working_color}" ]]; then
-  command="${command} --working-color $(printf '%q' "${working_color}")"
-fi
 
 case "$(printf '%s' "${vim_keys}" | tr '[:upper:]' '[:lower:]')" in
   on|true|1|yes) command="${command} --vim" ;;
