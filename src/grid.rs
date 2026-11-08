@@ -258,6 +258,10 @@ impl Viewport {
         }
     }
 
+    pub(crate) fn count(self) -> usize {
+        self.count
+    }
+
     pub fn range(self) -> std::ops::Range<usize> {
         self.first_row * self.columns..((self.first_row + self.rows) * self.columns).min(self.count)
     }

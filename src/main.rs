@@ -223,13 +223,12 @@ fn main() -> Result<()> {
         if std::mem::take(&mut redraw) {
             terminal.draw(|frame| {
                 grid_area = ui::grid_area(frame.area());
-                let viewport = ui::workspace_viewport(&app, grid_area, forced_columns);
+                let viewport = ui::render_workspace(frame, &app, colors, forced_columns, &previews);
                 columns = viewport.columns;
                 match app.focus {
                     model::Focus::Overview => app.session_row = viewport.first_row,
                     model::Focus::Session => app.window_row = viewport.first_row,
                 }
-                ui::render_view(frame, &app, colors, forced_columns, &previews);
             })?;
         }
 

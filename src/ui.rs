@@ -1,6 +1,6 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Margin, Rect},
+    layout::{Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
@@ -142,44 +142,59 @@ pub fn render_view(
     forced_columns: Option<usize>,
     previews: &PreviewCache,
 ) {
+    render_workspace(frame, app, colors, forced_columns, previews);
+}
+
+/// Renders the workspace and returns the viewport used for navigation.
+pub fn render_workspace(
+    frame: &mut Frame<'_>,
+    app: &App,
+    colors: CardColors,
+    forced_columns: Option<usize>,
+    previews: &PreviewCache,
+) -> Viewport {
     let area = frame.area();
+    let grid = grid_area(area);
+    let sessions = app.visible_sessions();
+    let viewport = viewport_for(
+        app,
+        grid,
+        forced_columns,
+        sessions.len(),
+        sessions.get(app.selected_index).copied(),
+    );
     let lang = app.language();
     frame.render_widget(Clear, area);
 
     if area.width < 20 || area.height < 6 {
         render_centered_message(frame, area, lang.text("终端空间不足", "Terminal too small"));
-        return;
+        return viewport;
     }
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(FOOTER_HEIGHT)])
-        .split(area);
 
     if let Some(error) = &app.error
         && app.sessions.is_empty()
     {
-        render_centered_message(frame, chunks[0], error);
+        render_centered_message(frame, grid, error);
     } else if app.sessions.is_empty() {
         render_centered_message(
             frame,
-            chunks[0],
+            grid,
             lang.text(
                 "没有 tmux 会话。\n按 q 退出。",
                 "No tmux sessions found.\nPress q to quit.",
             ),
         );
-    } else if app.visible_session_count() == 0 {
+    } else if sessions.is_empty() {
         render_centered_message(
             frame,
-            chunks[0],
+            grid,
             lang.text("没有匹配的会话", "No matching sessions"),
         );
     } else {
-        render_grid_view(frame, app, colors, chunks[0], forced_columns, previews);
+        render_grid_view(frame, app, colors, grid, viewport, previews, &sessions);
     }
 
-    let mut footer = workspace_footer(app, chunks[0], forced_columns);
+    let mut footer = workspace_footer(app, viewport);
     if !app.sessions.is_empty()
         && let Some(error) = &app.error
     {
@@ -188,13 +203,17 @@ pub fn render_view(
             Span::styled(format!("{error} │ "), Style::default().fg(Color::Red)),
         );
     }
-    frame.render_widget(Paragraph::new(footer), chunks[1]);
+    frame.render_widget(
+        Paragraph::new(footer),
+        Rect::new(area.x, grid.bottom(), area.width, FOOTER_HEIGHT),
+    );
     if let Some(dialog) = &app.dialog {
         render_workspace_dialog(frame, area, dialog, lang);
     }
     if app.grid_edit.is_some() {
         render_settings(frame, app, area, colors.selected);
     }
+    viewport
 }
 
 fn render_settings(frame: &mut Frame<'_>, app: &App, area: Rect, selected_color: Color) {
@@ -411,15 +430,10 @@ fn render_workspace_dialog(
     );
 }
 
-fn workspace_footer(app: &App, area: Rect, columns: Option<usize>) -> Line<'static> {
+fn workspace_footer(app: &App, viewport: Viewport) -> Line<'static> {
     let lang = app.language();
-    let count = if app.focus == Focus::Session {
-        app.selected_session()
-            .map_or(0, |session| session.windows.len())
-    } else {
-        app.visible_session_count()
-    };
-    let visible = workspace_viewport(app, area, columns).range();
+    let count = viewport.count();
+    let visible = viewport.range();
     let range = format!(
         "{}–{}/{count}",
         if visible.is_empty() {
@@ -520,11 +534,11 @@ fn render_grid_view(
     app: &App,
     colors: CardColors,
     area: Rect,
-    forced_columns: Option<usize>,
+    viewport: Viewport,
     previews: &PreviewCache,
+    sessions: &[&Session],
 ) {
-    let sessions = app.visible_sessions();
-    for (index, card_area) in session_cards(app, area, forced_columns) {
+    for (index, card_area) in card_rects(app, area, viewport, app.selected_index < sessions.len()) {
         if let Some(session) = sessions.get(index) {
             let current_attached = session.attached
                 && app.current_session_name.as_deref() == Some(session.name.as_str());
@@ -532,11 +546,14 @@ fn render_grid_view(
             let lang = app.language();
             let mut block =
                 card_block(session, selected, current_attached, colors, card_area, lang);
+            let count = session.windows.len();
+            let windows = if app.focus == Focus::Session {
+                viewport
+            } else {
+                window_viewport(card_area, app.grid.windows, count, 0, 0)
+            };
             if app.focus == Focus::Overview {
-                let count = session.windows.len();
-                let visible = window_viewport(card_area, app.grid.windows, count, 0, 0)
-                    .range()
-                    .end;
+                let visible = windows.range().end;
                 if visible < count && card_area.width >= 26 {
                     block = block.title_bottom(
                         Line::from(format!(
@@ -549,46 +566,69 @@ fn render_grid_view(
             }
             frame.render_widget(block, card_area);
             let window = if selected && app.focus == Focus::Session {
-                app.selected_window()
+                session.windows.get(app.window_index(session))
             } else {
                 None
             };
-            let first = if app.focus == Focus::Session {
-                app.window_row
-            } else {
-                0
-            };
-            let tiles = workspace_layout(
-                session,
-                card_area,
-                window.map(|window| window.id.as_str()),
-                app.grid,
-                first,
-            );
+            let tiles = window_tiles(session, card_area, windows, app.grid.gap, window.is_some());
             render_workspace_card(frame, tiles, previews, window, colors.selected, lang);
         }
     }
 }
 
 pub fn session_cards(app: &App, area: Rect, forced_columns: Option<usize>) -> Vec<(usize, Rect)> {
-    if app.focus == Focus::Session && app.selected_index < app.visible_session_count() {
-        return vec![(app.selected_index, area)];
-    }
-    workspace_viewport(app, area, forced_columns)
-        .cards(area, app.grid.gap)
-        .collect()
+    card_rects(
+        app,
+        area,
+        workspace_viewport(app, area, forced_columns),
+        app.focus == Focus::Session && app.selected_session().is_some(),
+    )
+    .collect()
+}
+
+fn card_rects(
+    app: &App,
+    area: Rect,
+    viewport: Viewport,
+    has_selection: bool,
+) -> impl Iterator<Item = (usize, Rect)> {
+    let detail = app.focus == Focus::Session;
+    let selected = (detail && has_selection).then_some((app.selected_index, area));
+    selected
+        .into_iter()
+        .chain(
+            viewport
+                .cards(area, app.grid.gap)
+                .take(if detail { 0 } else { usize::MAX }),
+        )
 }
 
 pub fn workspace_viewport(app: &App, area: Rect, columns: Option<usize>) -> Viewport {
+    let selected = (app.focus == Focus::Session)
+        .then(|| app.selected_session())
+        .flatten();
+    let count = if app.focus == Focus::Overview {
+        app.visible_session_count()
+    } else {
+        0
+    };
+    viewport_for(app, area, columns, count, selected)
+}
+
+fn viewport_for(
+    app: &App,
+    area: Rect,
+    columns: Option<usize>,
+    visible: usize,
+    selected: Option<&Session>,
+) -> Viewport {
     if app.focus == Focus::Session {
-        let count = app
-            .selected_session()
-            .map_or(0, |session| session.windows.len());
+        let count = selected.map_or(0, |session| session.windows.len());
         return window_viewport(
             area,
             app.grid.windows,
             count,
-            app.selected_window_index(),
+            selected.map_or(0, |session| app.window_index(session)),
             app.window_row,
         );
     }
@@ -600,7 +640,7 @@ pub fn workspace_viewport(app: &App, area: Rect, columns: Option<usize>) -> View
         area,
         limits,
         (MIN_CARD_WIDTH, MIN_CARD_HEIGHT),
-        app.visible_session_count(),
+        visible,
         app.selected_index,
         app.session_row,
     )
@@ -682,11 +722,25 @@ fn workspace_layout<'a>(
         .iter()
         .position(|window| selected == Some(window.id.as_str()))
         .unwrap_or(0);
-    let full_preview = selected.is_some();
-    window_viewport(card, settings.windows, windows.len(), selected_index, first)
-        .cards(inner, settings.gap)
+    let viewport = window_viewport(card, settings.windows, windows.len(), selected_index, first);
+    window_tiles(session, card, viewport, settings.gap, selected.is_some())
+}
+
+fn window_tiles(
+    session: &Session,
+    card: Rect,
+    viewport: Viewport,
+    gap: u16,
+    full_preview: bool,
+) -> Vec<WindowTile<'_>> {
+    let inner = card.inner(Margin::new(1, 1));
+    if inner.is_empty() {
+        return Vec::new();
+    }
+    viewport
+        .cards(inner, gap)
         .map(|(index, area)| {
-            let window = &windows[index];
+            let window = &session.windows[index];
             let content = Block::default().borders(window_borders(area)).inner(area);
             let (panes, compact) = pane_layout(window, content, full_preview);
             WindowTile {

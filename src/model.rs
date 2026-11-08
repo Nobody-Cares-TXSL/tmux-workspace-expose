@@ -208,12 +208,8 @@ impl App {
     }
 
     pub fn selected_window(&self) -> Option<&WindowPreview> {
-        let windows = &self.selected_session()?.windows;
-        self.window_selection
-            .as_ref()
-            .and_then(|id| windows.iter().find(|window| &window.id == id))
-            .or_else(|| windows.iter().find(|window| window.active))
-            .or_else(|| windows.first())
+        let session = self.selected_session()?;
+        session.windows.get(self.window_index(session))
     }
 
     pub fn select_window(&mut self, window_id: String) {
@@ -221,16 +217,15 @@ impl App {
     }
 
     pub fn selected_window_index(&self) -> usize {
-        let Some(selected) = self.selected_window() else {
-            return 0;
-        };
         self.selected_session()
-            .and_then(|session| {
-                session
-                    .windows
-                    .iter()
-                    .position(|window| window.id == selected.id)
-            })
+            .map_or(0, |session| self.window_index(session))
+    }
+
+    pub(crate) fn window_index(&self, session: &Session) -> usize {
+        self.window_selection
+            .as_ref()
+            .and_then(|id| session.windows.iter().position(|window| &window.id == id))
+            .or_else(|| session.windows.iter().position(|window| window.active))
             .unwrap_or(0)
     }
 
