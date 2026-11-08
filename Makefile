@@ -1,7 +1,7 @@
-.PHONY: all build build-release install clean test check fmt fmt-check clippy lint plugin-check publish-dry-run run help
+.PHONY: all build build-release install clean test check fmt fmt-check clippy lint plugin-check run help
 
 # Default target
-all: check build test
+all: check build
 
 # Show available targets
 help:
@@ -11,12 +11,11 @@ help:
 	@printf "  make install          Install from local checkout\n"
 	@printf "  make clean            Remove build artifacts\n"
 	@printf "  make test             Run tests\n"
-	@printf "  make check            Run fmt, tests, clippy, and publish dry-run\n"
+	@printf "  make check            Run fmt, tests, clippy, and plugin checks\n"
 	@printf "  make fmt              Format source\n"
 	@printf "  make fmt-check        Check formatting\n"
 	@printf "  make clippy           Run clippy with warnings denied\n"
 	@printf "  make plugin-check     Check tmux plugin entrypoint\n"
-	@printf "  make publish-dry-run  Verify crates.io package\n"
 	@printf "  make run ARGS=...     Run tmux-expose with arguments\n"
 
 # Build debug version
@@ -40,7 +39,7 @@ test:
 	cargo test
 
 # Run all local checks
-check: fmt-check test clippy plugin-check publish-dry-run
+check: fmt-check test clippy plugin-check
 
 # Format code
 fmt:
@@ -65,10 +64,6 @@ plugin-check:
 	grep -q 'width="$${width:-100%}"' tmux.expose.tmux
 	grep -q 'height="$${height:-100%}"' tmux.expose.tmux
 	grep -q 'anchor="$${anchor:-center}"' tmux.expose.tmux
-
-# Verify crates.io package
-publish-dry-run:
-	cargo publish --dry-run --allow-dirty
 
 # Run with arguments (usage: make run ARGS="--help")
 run:

@@ -1,7 +1,6 @@
 use std::{
     env, io,
     process::Command,
-    str::FromStr,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -16,19 +15,33 @@ use crossterm::{
 use ratatui::style::Color;
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use tmux_expose::{
+    appearance::{
+        ACTIVE_REFRESH, AGENT_SORT, Appearance, MAX_CAPTURES, PANE_REFRESH, TOPOLOGY_REFRESH,
+        parse_color,
+    },
+    grid::Settings,
     input,
     model::{self, AgentStatus, App},
+    preview::{PreviewCache, RefreshPolicy},
     tmux, ui,
 };
+
+mod popup;
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Mission Control-style tmux session switcher")]
 struct Cli {
-    #[arg(long, default_value_t = 500, value_name = "MS", value_parser = clap::value_parser!(u64).range(1..))]
-    refresh_interval: u64,
+    #[arg(long, default_value_t = 1500, value_name = "MS", value_parser = clap::value_parser!(u64).range(1..))]
+    topology_refresh: u64,
 
-    #[arg(long, value_name = "COLS", value_parser = clap::value_parser!(u16).range(1..))]
-    thumbnail_width: Option<u16>,
+    #[arg(long, default_value_t = 1500, value_name = "MS", value_parser = clap::value_parser!(u64).range(1..))]
+    pane_refresh: u64,
+
+    #[arg(long, default_value_t = 300, value_name = "MS", value_parser = clap::value_parser!(u64).range(1..))]
+    active_pane_refresh: u64,
+
+    #[arg(long, default_value_t = 4, value_name = "N", value_parser = clap::value_parser!(u16).range(1..=32))]
+    max_captures: u16,
 
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(1..))]
     columns: Option<u16>,
@@ -59,27 +72,6 @@ struct Cli {
     /// waiting agent to the top.
     #[arg(long)]
     no_agent_sort: bool,
-}
-
-fn parse_color(value: &str) -> Result<Color, String> {
-    if let Ok(color) = Color::from_str(value) {
-        return Ok(color);
-    }
-
-    // Accept tmux-style indexed colors such as `colour208` / `color208`,
-    // which ratatui's parser does not recognize on its own.
-    if let Some(index) = value
-        .strip_prefix("colour")
-        .or_else(|| value.strip_prefix("color"))
-        .and_then(|digits| digits.parse::<u8>().ok())
-    {
-        return Ok(Color::Indexed(index));
-    }
-
-    Err(format!(
-        "invalid color {value:?}; expected a name (e.g. `yellow`), \
-         an index (`208` or `colour208`), or a hex value (`#rrggbb`)"
-    ))
 }
 
 struct TerminalGuard;
@@ -141,32 +133,6 @@ fn run_agent_status(status: &str) -> Result<()> {
     Ok(())
 }
 
-/// Headless triage: jumps straight to the next session whose agent is
-/// blocked on or waiting for you (see `model::next_urgent_session`), without
-/// opening the picker. Like `agent-status`, deliberately not a clap
-/// subcommand, so it never touches the picker's flags.
-///
-/// Usage: `tmux-expose next [SESSION_ID [CLIENT]]`. The plugin's key binding
-/// passes `#{session_id}` and `#{client_name}`, because `run-shell` isn't
-/// attached to a client and tmux would otherwise guess which one you meant.
-/// Run from a shell inside a pane, both can be omitted.
-fn run_next(session_id: Option<String>, client: Option<String>) -> Result<()> {
-    let session_id = match session_id.filter(|id| !id.is_empty()) {
-        Some(id) => Some(id),
-        None => tmux::current_session_id().unwrap_or(None),
-    };
-    let client = client.filter(|client| !client.is_empty());
-
-    let sessions = tmux::list_sessions_without_previews()?;
-    match model::next_urgent_session(&sessions, session_id.as_deref()) {
-        Some(session) => tmux::switch_client_for(client.as_deref(), &session.id),
-        None => tmux::display_message(
-            client.as_deref(),
-            "tmux-expose: no other agents waiting on you",
-        ),
-    }
-}
-
 fn validate_agent_status_word(status: &str) -> Result<()> {
     if status == "clear" || AgentStatus::parse(status).is_some() {
         return Ok(());
@@ -191,19 +157,29 @@ fn clear_pane_option(pane: &str, option: &str) {
 fn main() -> Result<()> {
     let mut raw_args = env::args();
     raw_args.next(); // program name
-    match raw_args.next().as_deref() {
-        Some("agent-status") => return run_agent_status(&raw_args.next().unwrap_or_default()),
-        Some("next") => return run_next(raw_args.next(), raw_args.next()),
-        _ => {}
+    if raw_args.next().as_deref() == Some("agent-status") {
+        return run_agent_status(&raw_args.next().unwrap_or_default());
     }
 
     let cli = Cli::parse();
+    let mut previews = PreviewCache::new(env::var("TMUX_PANE").ok());
+    let configured = configured_appearance(&cli);
+    let (appearance, config_error) = match Appearance::load(configured.clone()) {
+        Ok(appearance) => (appearance, None),
+        Err(error) => (configured, Some(error.to_string())),
+    };
 
-    let current_session_name = tmux::current_session_name().unwrap_or(None);
-    let current_session_id = tmux::current_session_id().unwrap_or(None);
-    let agent_sort = !cli.no_agent_sort;
-    let mut app = match tmux::list_sessions() {
+    let client = env::var("TMUX_EXPOSE_CLIENT").ok();
+    let current_session_id = env::var("TMUX_EXPOSE_SESSION")
+        .ok()
+        .or_else(|| tmux::current_session_id().unwrap_or(None));
+    let agent_sort = appearance.0[AGENT_SORT] == "on";
+    let mut app = match tmux::list_workspace_sessions() {
         Ok(mut sessions) => {
+            let current_session_name = sessions
+                .iter()
+                .find(|session| Some(session.id.as_str()) == current_session_id.as_deref())
+                .map(|session| session.name.clone());
             if agent_sort {
                 model::sort_sessions_by_agent_status_with_current(
                     &mut sessions,
@@ -217,70 +193,54 @@ fn main() -> Result<()> {
             app
         }
         Err(error) => {
-            let mut app = App::new(Vec::new(), current_session_name);
-            app.error = Some(format!("{error}\n\nPress q or Esc to quit."));
+            let mut app = App::new(Vec::new(), None);
+            app.error = Some(error.to_string());
             app
         }
     };
-    app.vim_keys = cli.vim;
-
-    let mut colors = ui::CardColors::default();
-    if let Some(color) = cli.selected_color {
-        colors.selected = color;
+    app.appearance = appearance;
+    app.grid_error = config_error;
+    app.vim_keys = app.appearance.0[7] == "on";
+    match Settings::load() {
+        Ok(settings) => app.grid = settings,
+        Err(error) => app.grid_error = Some(error.to_string()),
     }
-    if let Some(color) = cli.attached_color {
-        colors.attached = color;
-    }
-    if let Some(color) = cli.inactive_color {
-        colors.inactive = color;
-    }
-    if let Some(color) = cli.attention_color {
-        colors.attention = color;
-    }
-    if let Some(color) = cli.waiting_color {
-        colors.waiting = color;
-    }
-    if let Some(color) = cli.working_color {
-        colors.working = color;
-    }
+    let mut colors = appearance_colors(&app.appearance);
+    let mut popup_resize = popup::Resize::from_env(client.as_deref(), &mut app);
 
     let _guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("failed to create terminal")?;
 
-    let refresh_interval = Duration::from_millis(cli.refresh_interval);
     let toggle_key = env::var("TMUX_EXPOSE_TOGGLE_KEY")
         .ok()
         .and_then(|key| input::ToggleKey::from_tmux_key(&key));
     let mut last_refresh = Instant::now();
+    let mut topology_available = app.error.is_none();
 
     loop {
         let forced_columns = cli.columns.map(usize::from);
-        terminal
-            .draw(|frame| ui::render(frame, &app, colors, cli.thumbnail_width, forced_columns))?;
+        let grid_area = current_grid_area(&terminal)?;
+        let viewport = ui::workspace_viewport(&app, grid_area, forced_columns);
+        match app.focus {
+            model::Focus::Overview => app.session_row = viewport.first_row,
+            model::Focus::Session => app.window_row = viewport.first_row,
+        }
+        terminal.draw(|frame| ui::render_view(frame, &app, colors, forced_columns, &previews))?;
 
         if app.should_quit {
             break;
         }
 
         if app.should_switch {
-            if let Some(session) = app.selected_session() {
-                let selected_name = session.name.clone();
-                let selected_target = session.id.clone();
-                if app.current_session_name.as_deref() == Some(selected_name.as_str()) {
-                    break;
+            match switch_selection(&app, client.as_deref()) {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(error) => {
+                    app.error = Some(error.to_string());
                 }
-
-                match tmux::switch_client(&selected_target) {
-                    Ok(()) => break,
-                    Err(error) => {
-                        app.error = Some(format!("{error}\n\nPress q or Esc to quit."));
-                        app.should_switch = false;
-                    }
-                }
-            } else {
-                app.should_switch = false;
             }
+            app.should_switch = false;
         }
 
         if event::poll(Duration::from_millis(50))? {
@@ -288,64 +248,188 @@ fn main() -> Result<()> {
                 Event::Key(key)
                     if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                 {
-                    let columns = current_columns(
-                        &terminal,
-                        app.visible_session_count(),
-                        cli.thumbnail_width,
-                        forced_columns,
-                    )?;
-                    input::handle_key_with_toggle(&mut app, key, columns, toggle_key);
+                    input::handle_key_with_toggle(&mut app, key, viewport.columns, toggle_key);
                 }
                 Event::Mouse(mouse) => {
                     let grid_area = current_grid_area(&terminal)?;
-                    input::handle_mouse(
-                        &mut app,
-                        mouse,
-                        grid_area,
-                        cli.thumbnail_width,
-                        forced_columns,
-                    );
+                    input::handle_mouse(&mut app, mouse, grid_area, forced_columns);
                 }
                 Event::Resize(_, _) => {}
                 _ => {}
             }
         }
 
-        if last_refresh.elapsed() >= refresh_interval {
-            match tmux::list_sessions_skipping_preview_for(current_session_id.as_deref()) {
+        let mut settings_saved = false;
+        if std::mem::take(&mut app.save_grid) {
+            match save_settings(&mut app) {
+                Ok(()) => {
+                    colors = appearance_colors(&app.appearance);
+                    settings_saved = true;
+                }
+                Err(error) => app.grid_error = Some(format!("{error:#}")),
+            }
+        }
+        let mut changed_target = false;
+        if let Some(action) = app.confirmed_action.take() {
+            match tmux::apply_workspace_action(action) {
+                Ok(()) => changed_target = true,
+                Err(error) => {
+                    app.error = Some(error.to_string());
+                    last_refresh = Instant::now();
+                }
+            }
+        }
+        let refresh_topology = !app.should_quit
+            && !app.should_switch
+            && (changed_target
+                || settings_saved
+                || last_refresh.elapsed()
+                    >= Duration::from_millis(app.appearance.number(TOPOLOGY_REFRESH)));
+        if refresh_topology {
+            match tmux::list_workspace_sessions() {
                 Ok(mut sessions) => {
-                    if agent_sort {
+                    app.current_session_name = sessions
+                        .iter()
+                        .find(|session| Some(session.id.as_str()) == current_session_id.as_deref())
+                        .map(|session| session.name.clone());
+                    topology_available = true;
+                    previews.reconcile(&sessions);
+                    if app.appearance.0[AGENT_SORT] == "on" {
                         model::sort_sessions_by_agent_status_with_current(
                             &mut sessions,
                             app.current_session_name.as_deref(),
                         );
                     }
-                    app.replace_sessions_preserving_preview_for(
-                        sessions,
-                        current_session_id.as_deref(),
-                    );
+                    app.replace_sessions(sessions);
                     app.error = None;
                 }
                 Err(error) => {
-                    app.error = Some(format!("{error}\n\nPress q or Esc to quit."));
+                    topology_available = false;
+                    app.error = Some(error.to_string());
                 }
             }
             last_refresh = Instant::now();
+        }
+        if !app.should_quit
+            && !app.should_switch
+            && let Some(resize) = &mut popup_resize
+            && resize.reopen(&app)
+        {
+            drop(terminal);
+            drop(_guard);
+            std::process::exit(75);
+        }
+        if topology_available && !app.should_quit && !app.should_switch {
+            let visible = app.visible_sessions();
+            let selected = app.selected_session();
+            let active_pane = app
+                .selected_window()
+                .and_then(|window| window.panes.iter().find(|pane| pane.active));
+            previews.refresh(
+                &visible,
+                selected.map(|session| session.id.as_str()),
+                active_pane.map(|pane| pane.id.as_str()),
+                RefreshPolicy {
+                    selected_pane: Duration::from_millis(app.appearance.number(ACTIVE_REFRESH)),
+                    background: Duration::from_millis(app.appearance.number(PANE_REFRESH)),
+                    max_captures: app.appearance.number(MAX_CAPTURES) as usize,
+                    ..RefreshPolicy::default()
+                },
+            );
         }
     }
 
     Ok(())
 }
 
-fn current_columns(
-    terminal: &Terminal<CrosstermBackend<io::Stdout>>,
-    session_count: usize,
-    min_card_width: Option<u16>,
-    forced_columns: Option<usize>,
-) -> Result<usize> {
-    let area = current_grid_area(terminal)?;
-    let grid = ui::calculate_grid(area, session_count, min_card_width, forced_columns);
-    Ok(grid.columns)
+fn configured_appearance(cli: &Cli) -> Appearance {
+    let mut appearance = Appearance::from_tmux();
+    if cli.vim {
+        appearance.0[7] = "on".into();
+    }
+    if cli.no_agent_sort {
+        appearance.0[AGENT_SORT] = "off".into();
+    }
+    appearance.0[TOPOLOGY_REFRESH] = cli.topology_refresh.to_string();
+    appearance.0[PANE_REFRESH] = cli.pane_refresh.to_string();
+    appearance.0[ACTIVE_REFRESH] = cli.active_pane_refresh.to_string();
+    appearance.0[MAX_CAPTURES] = cli.max_captures.to_string();
+    for (index, color) in [
+        cli.selected_color,
+        cli.attached_color,
+        cli.inactive_color,
+        cli.attention_color,
+        cli.waiting_color,
+        cli.working_color,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if let Some(color) = color {
+            appearance.0[8 + index] = color.to_string();
+        }
+    }
+    appearance
+}
+
+fn appearance_colors(appearance: &Appearance) -> ui::CardColors {
+    let defaults = ui::CardColors::default();
+    let color = |index: usize, fallback| parse_color(&appearance.0[index]).unwrap_or(fallback);
+    ui::CardColors {
+        selected: color(8, defaults.selected),
+        attached: color(9, defaults.attached),
+        inactive: color(10, defaults.inactive),
+        attention: color(11, defaults.attention),
+        waiting: color(12, defaults.waiting),
+        working: color(13, defaults.working),
+    }
+}
+
+fn save_settings(app: &mut App) -> Result<()> {
+    let lang = app.language();
+    let grid = app
+        .grid_edit
+        .as_ref()
+        .and_then(|edit| edit.settings())
+        .context(lang.text(
+            "行列范围为 1–12，间距范围为 0–3",
+            "Use 1–12 for rows and columns and 0–3 for card gap.",
+        ))?;
+    let appearance = &app
+        .appearance_edit
+        .as_ref()
+        .context(lang.text("设置已关闭", "Settings are closed"))?
+        .draft;
+    let changed_appearance = *appearance != app.appearance;
+    let changed_grid = grid != app.grid;
+    if changed_grid || !changed_appearance {
+        grid.save()
+            .context(lang.text("保存网格失败", "Could not save grid settings"))?;
+    }
+    if changed_appearance && let Err(error) = appearance.save(&app.appearance) {
+        if changed_grid {
+            app.grid
+                .save()
+                .context(lang.text("恢复网格设置失败", "Could not restore grid settings"))?;
+        }
+        return Err(error);
+    }
+    app.grid = grid;
+    app.appearance = appearance.clone();
+    app.vim_keys = app.appearance.0[7] == "on";
+    app.close_settings();
+    Ok(())
+}
+
+fn switch_selection(app: &App, client: Option<&str>) -> Result<bool> {
+    let Some(session) = app.selected_session() else {
+        return Ok(false);
+    };
+    let Some(window) = app.selected_window() else {
+        return Ok(false);
+    };
+    tmux::switch_client_for(client, &format!("{}:{}", session.id, window.id))?;
+    Ok(true)
 }
 
 fn current_grid_area(terminal: &Terminal<CrosstermBackend<io::Stdout>>) -> Result<Rect> {
@@ -358,20 +442,6 @@ mod tests {
     use clap::Parser;
 
     use super::*;
-
-    #[test]
-    fn thumbnail_width_defaults_to_fit_screen_mode() {
-        let cli = Cli::parse_from(["tmux-expose"]);
-
-        assert_eq!(cli.thumbnail_width, None);
-    }
-
-    #[test]
-    fn parses_thumbnail_width_option() {
-        let cli = Cli::parse_from(["tmux-expose", "--thumbnail-width", "48"]);
-
-        assert_eq!(cli.thumbnail_width, Some(48));
-    }
 
     #[test]
     fn parses_forced_columns_option() {

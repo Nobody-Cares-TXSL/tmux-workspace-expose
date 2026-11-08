@@ -549,8 +549,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "tmux-expose"
-version = "0.8.0"
+name = "tmux-workspace-expose"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",

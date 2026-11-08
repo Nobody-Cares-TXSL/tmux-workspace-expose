@@ -2,6 +2,23 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == --popup ]]; then
+  client="$2"
+  start="$3"
+  shift 3
+  state="$(mktemp -t tmux-expose.XXXXXXXX)"
+  trap 'rm -f -- "${state}"' EXIT
+  while true; do
+    size="$(tmux display-message -p -c "${client}" '#{client_width} #{client_height}')"
+    status=0
+    tmux display-popup -e "TMUX_EXPOSE_RESUME=${state}" -e "TMUX_EXPOSE_OPEN_SIZE=${size}" \
+      -e "TMUX_EXPOSE_START=${start}" -e "TMUX_EXPOSE_PLUGIN_PATH=${BASH_SOURCE[0]}" "$@" || status=$?
+    if [[ "${status}" != 75 || ! -s "${state}" ]]; then
+      exit "${status}"
+    fi
+  done
+fi
+
 key="$(tmux show-option -gqv @tmux-expose-key)"
 key_table="$(tmux show-option -gqv @tmux-expose-key-table)"
 width="$(tmux show-option -gqv @tmux-expose-width)"
@@ -18,9 +35,6 @@ working_color="$(tmux show-option -gqv @tmux-expose-working-color)"
 agent_sort="$(tmux show-option -gqv @tmux-expose-agent-sort)"
 vim_keys="$(tmux show-option -gqv @tmux-expose-vim-keys)"
 command="$(tmux show-option -gqv @tmux-expose-command)"
-next_key="$(tmux show-option -gqv @tmux-expose-next-key)"
-next_key_table="$(tmux show-option -gqv @tmux-expose-next-key-table)"
-next_binary="$(tmux show-option -gqv @tmux-expose-binary)"
 
 if [[ -z "${key}" ]]; then
   key="M-e"
@@ -32,25 +46,27 @@ fi
 width="${width:-100%}"
 height="${height:-100%}"
 anchor="${anchor:-center}"
+appearance_file="${XDG_CONFIG_HOME:-${HOME}/.config}/tmux-expose/appearance.conf"
+if [[ -r "${appearance_file}" ]]; then
+  while IFS='=' read -r option value; do
+    case "${option}" in
+      key) key="${value}" ;;
+      key-table) key_table="${value}" ;;
+      width) width="${value}" ;;
+      height) height="${value}" ;;
+      anchor) anchor="${value}" ;;
+      background) style="${style:+${style},}bg=${value}" ;;
+      border) border_style="${border_style:+${border_style},}fg=${value}" ;;
+    esac
+  done < "${appearance_file}"
+fi
 command="${command:-tmux-expose}"
-next_key_table="${next_key_table:-prefix}"
-
-# `next` is a headless subcommand of the same binary, so take just the
-# program from @tmux-expose-command by default. This is a plain split on the
-# first space -- never `eval`, which would execute anything else in that
-# string ($(...), ;, &&, a pipeline) as a side effect of plugin startup. The
-# tradeoff is that it can't handle a quoted executable path that itself
-# contains a space (e.g. '/opt/my tools/tmux-expose' --columns 2); set
-# @tmux-expose-binary explicitly in that case rather than relying on this to
-# parse it out.
-next_binary="${next_binary:-${command%% *}}"
-
-# run-shell isn't attached to a client, so pass the pressing client's session
-# and name explicitly. #{q:...} asks tmux to shell-quote the expanded value
-# itself, so a session/client name containing quotes or shell metacharacters
-# can't break out of the generated command. next_binary is shell-escaped for
-# the same reason -- @tmux-expose-binary may itself contain a space.
-next_command="$(printf '%q' "${next_binary}") next #{q:session_id} #{q:client_name}"
+for option in topology-refresh pane-refresh active-pane-refresh max-captures; do
+  value="$(tmux show-option -gqv "@tmux-expose-${option}")"
+  if [[ -n "${value}" ]]; then
+    command="${command} --${option} $(printf '%q' "${value}")"
+  fi
+done
 
 # Shell-escape color values before splicing them into the -E command string.
 # tmux runs that string through the shell, where an unquoted hex value such as
@@ -110,9 +126,26 @@ if [[ -n "${border_style}" ]]; then
   style_args+=(-S "${border_style}")
 fi
 
-tmux bind-key -T "${key_table}" "${key}" display-popup -w "${width}" -h "${height}" "${position_args[@]}" "${style_args[@]}" -e "TMUX_EXPOSE_TOGGLE_KEY=${key}" -E "${command}"
-
-# Unbound unless @tmux-expose-next-key is set, so upgrading never takes over a key.
-if [[ -n "${next_key}" ]]; then
-  tmux bind-key -T "${next_key_table}" "${next_key}" run-shell "${next_command}"
-fi
+# display-popup does not expand formats in -e values. Expand the client and
+# session at keypress time in run-shell, where each value can be shell-quoted.
+# Double literal '#' so popup position formats reach display-popup intact and
+# a format in a custom command stays part of that command.
+script="${BASH_SOURCE[0]}"
+if [[ "${script}" != /* ]]; then script="${PWD}/${script}"; fi
+script="${script//#/##}"
+launcher="bash '${script//\'/\'\\\'\'}' --popup #{q:client_name}"
+popup_args() {
+  local args='-c #{q:client_name} -t #{q:pane_id} -e TMUX_EXPOSE_CLIENT=#{q:client_name} -e TMUX_EXPOSE_SESSION=#{q:session_id}'
+  local argument
+  for argument in "$@" "${style_args[@]}" -e "TMUX_EXPOSE_TOGGLE_KEY=${key}" -E "${command}"; do
+    argument="${argument//#/##}"
+    args+=" '${argument//\'/\'\\\'\'}'"
+  done
+  printf '%s' "${args}"
+}
+popup_arguments="$(popup_args -w "${width}" -h "${height}" "${position_args[@]}")"
+tmux bind-key -T "${key_table}" "${key}" run-shell -b "${launcher} 0 ${popup_arguments}"
+# Shift-F12 is the terminal encoding used for Ctrl+, on tmux 3.4.
+settings_arguments="$(popup_args -w 100% -h 100%)"
+tmux bind-key -T root S-F12 run-shell -b "${launcher} 1 ${settings_arguments}"
+tmux bind-key -T root M-w run-shell -b "${launcher} 2 ${popup_arguments}"

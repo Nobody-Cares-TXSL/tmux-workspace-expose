@@ -23,10 +23,8 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
       - name: Run tests
-        run: cargo test
+        run: cargo test --locked
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Check tmux plugin entrypoint
         run: make plugin-check
-      - name: Verify crates.io package
-        run: cargo publish --dry-run

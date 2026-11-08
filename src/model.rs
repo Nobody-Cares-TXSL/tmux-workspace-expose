@@ -1,3 +1,6 @@
+use crate::appearance::{Appearance, AppearanceEdit, Language, Page};
+use crate::grid::{Settings, SettingsEdit};
+
 /// A Claude Code (or other agent) pane's status, as written by an external
 /// hook into the tmux pane option `@agent_status`. Ordered least-to-most
 /// severe so the derived `Ord` can be used to pick the worst value when
@@ -43,10 +46,7 @@ pub struct Session {
     pub name: String,
     pub attached: bool,
     pub window_count: u32,
-    pub current_window: Option<String>,
-    pub last_activity: Option<String>,
-    pub preview: Vec<String>,
-    pub preview_error: Option<String>,
+    pub windows: Vec<WindowPreview>,
     /// The worst-ranked status among this session's panes, or `None` if no
     /// pane has ever reported one.
     pub agent_status: Option<AgentStatus>,
@@ -54,6 +54,61 @@ pub struct Session {
     /// — i.e. how long the most-neglected pane has held that status.
     pub agent_status_since: Option<i64>,
     pub agent_pane_counts: AgentPaneCounts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowPreview {
+    pub id: String,
+    pub index: u32,
+    pub name: String,
+    pub width: u16,
+    pub height: u16,
+    pub active: bool,
+    pub panes: Vec<PanePreview>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanePreview {
+    pub id: String,
+    pub index: u32,
+    pub left: u16,
+    pub top: u16,
+    pub width: u16,
+    pub height: u16,
+    pub active: bool,
+    pub command: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Focus {
+    #[default]
+    Overview,
+    Session,
+}
+
+#[derive(Debug)]
+pub enum WorkspaceTarget {
+    Session { id: String, name: String },
+    Window { id: String, name: String },
+}
+
+impl WorkspaceTarget {
+    pub fn description(&self) -> String {
+        self.description_in(Language::En)
+    }
+
+    pub fn description_in(&self, lang: Language) -> String {
+        match self {
+            Self::Session { name, .. } => format!("{} {name}", lang.text("会话", "Session")),
+            Self::Window { name, .. } => format!("{} {name}", lang.text("窗口", "Window")),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum WorkspaceDialog {
+    Close(WorkspaceTarget),
+    Rename(WorkspaceTarget, String),
 }
 
 #[derive(Debug)]
@@ -66,6 +121,19 @@ pub struct App {
     pub error: Option<String>,
     /// When true, the picker uses modal vim navigation (hjkl to move, `/` to search).
     pub vim_keys: bool,
+    pub focus: Focus,
+    pub dialog: Option<WorkspaceDialog>,
+    pub confirmed_action: Option<WorkspaceDialog>,
+    pub grid: Settings,
+    pub grid_edit: Option<SettingsEdit>,
+    pub appearance: Appearance,
+    pub appearance_edit: Option<AppearanceEdit>,
+    pub settings_page: Page,
+    pub save_grid: bool,
+    pub grid_error: Option<String>,
+    pub session_row: usize,
+    pub window_row: usize,
+    window_selection: Option<String>,
     search_query: Option<String>,
     /// True while actively typing a query. In vim mode this is distinct from
     /// `search_query` being set: Esc leaves editing (so hjkl moves again) but
@@ -91,6 +159,19 @@ impl App {
             should_switch: false,
             error: None,
             vim_keys: false,
+            focus: Focus::Overview,
+            dialog: None,
+            confirmed_action: None,
+            grid: Settings::default(),
+            grid_edit: None,
+            appearance: Appearance::default(),
+            appearance_edit: None,
+            settings_page: Page::Grid,
+            save_grid: false,
+            grid_error: None,
+            session_row: 0,
+            window_row: 0,
+            window_selection: None,
             search_query: None,
             editing_search: false,
         }
@@ -117,6 +198,123 @@ impl App {
 
     pub fn selected_session(&self) -> Option<&Session> {
         self.visible_sessions().get(self.selected_index).copied()
+    }
+
+    pub fn selected_window(&self) -> Option<&WindowPreview> {
+        let windows = &self.selected_session()?.windows;
+        self.window_selection
+            .as_ref()
+            .and_then(|id| windows.iter().find(|window| &window.id == id))
+            .or_else(|| windows.iter().find(|window| window.active))
+            .or_else(|| windows.first())
+    }
+
+    pub fn select_window(&mut self, window_id: String) {
+        self.window_selection = Some(window_id);
+    }
+
+    pub fn selected_window_index(&self) -> usize {
+        let Some(selected) = self.selected_window() else {
+            return 0;
+        };
+        self.selected_session()
+            .and_then(|session| {
+                session
+                    .windows
+                    .iter()
+                    .position(|window| window.id == selected.id)
+            })
+            .unwrap_or(0)
+    }
+
+    pub fn move_window_row(&mut self, columns: usize, down: bool) {
+        let Some(session) = self.selected_session() else {
+            return;
+        };
+        let index = self.selected_window_index();
+        let row = index / columns;
+        let next = if down && row + 1 < session.windows.len().div_ceil(columns) {
+            (index + columns).min(session.windows.len() - 1)
+        } else if !down && row > 0 {
+            index - columns
+        } else {
+            return;
+        };
+        self.select_window(session.windows[next].id.clone());
+    }
+
+    pub fn cycle_window(&mut self, backward: bool) {
+        let Some(current) = self.selected_window() else {
+            return;
+        };
+        let Some(session) = self.selected_session() else {
+            return;
+        };
+        let windows = &session.windows;
+        if let Some(index) = windows.iter().position(|window| window.id == current.id) {
+            let step = if backward { windows.len() - 1 } else { 1 };
+            self.select_window(windows[(index + step) % windows.len()].id.clone());
+        }
+    }
+
+    pub fn open_session_detail(&mut self) {
+        if self.selected_session().is_some() {
+            self.stop_editing_search();
+            self.window_selection = None;
+            self.window_row = 0;
+            self.focus = Focus::Session;
+        }
+    }
+
+    pub fn open_current_windows(&mut self) {
+        let Some(index) = self
+            .sessions
+            .iter()
+            .position(|session| self.current_session_name.as_deref() == Some(&session.name))
+        else {
+            return;
+        };
+        self.clear_search();
+        self.selected_index = index;
+        self.open_session_detail();
+    }
+
+    pub fn open_grid_settings(&mut self) {
+        self.grid_edit = Some(SettingsEdit::new(self.grid));
+        self.appearance_edit = Some(AppearanceEdit::new(self.appearance.clone()));
+        self.settings_page = Page::Grid;
+        self.grid_error = None;
+    }
+
+    pub fn close_settings(&mut self) {
+        self.grid_edit = None;
+        self.appearance_edit = None;
+        self.grid_error = None;
+    }
+
+    pub fn select_settings_page(&mut self, page: Page) {
+        self.settings_page = page;
+        if page != Page::Grid
+            && let Some(edit) = &mut self.appearance_edit
+        {
+            edit.select(page.fields().start);
+        }
+    }
+
+    pub fn workspace_target(&self) -> Option<WorkspaceTarget> {
+        let session = self.selected_session()?;
+        match self.focus {
+            Focus::Overview => Some(WorkspaceTarget::Session {
+                id: session.id.clone(),
+                name: session.name.clone(),
+            }),
+            Focus::Session => self
+                .selected_window()
+                .map(|window| WorkspaceTarget::Window {
+                    id: window.id.clone(),
+                    name: format!("{}:{} ({})", session.name, window.index, window.name),
+                }),
+        }
     }
 
     pub fn visible_sessions(&self) -> Vec<&Session> {
@@ -196,47 +394,116 @@ impl App {
         self.editing_search
     }
 
+    pub fn popup_state(&self) -> String {
+        let session = self
+            .selected_session()
+            .map_or("-", |session| session.id.as_str());
+        let window = self
+            .selected_window()
+            .map_or("-", |window| window.id.as_str());
+        let edit = self
+            .grid_edit
+            .as_ref()
+            .map_or_else(String::new, SettingsEdit::encode);
+        let page = self.settings_page.index();
+        let appearance_edit = self
+            .appearance_edit
+            .as_ref()
+            .map_or_else(String::new, AppearanceEdit::snapshot);
+        format!(
+            "{session} {window} {} {} {} {} {}\n{edit}\n{page} {appearance_edit}\n{}",
+            u8::from(self.focus == Focus::Session),
+            self.session_row,
+            self.window_row,
+            u8::from(self.search_query.is_some()),
+            u8::from(self.editing_search),
+            self.search_text().unwrap_or_default()
+        )
+    }
+
+    pub fn restore_popup_state(&mut self, saved: &str) {
+        let Some((meta, rest)) = saved.split_once('\n') else {
+            return;
+        };
+        let Some((edit, rest)) = rest.split_once('\n') else {
+            return;
+        };
+        let Some((appearance_edit, query)) = rest.split_once('\n') else {
+            return;
+        };
+        let fields: Vec<_> = meta.split_whitespace().collect();
+        let [
+            session,
+            window,
+            detail,
+            session_row,
+            window_row,
+            has_query,
+            editing,
+        ] = fields.as_slice()
+        else {
+            return;
+        };
+        self.search_query = (*has_query == "1").then(|| query.to_owned());
+        self.editing_search = self.search_query.is_some() && *editing == "1";
+        let index = self
+            .visible_sessions()
+            .iter()
+            .position(|entry| entry.id == *session);
+        self.selected_index = index.unwrap_or_else(|| {
+            self.selected_index
+                .min(self.visible_session_count().saturating_sub(1))
+        });
+        if index.is_some() && *detail == "1" {
+            self.focus = Focus::Session;
+            self.select_window((*window).to_owned());
+        }
+        self.session_row = session_row.parse().unwrap_or(0);
+        self.window_row = window_row.parse().unwrap_or(0);
+        self.grid_edit = SettingsEdit::decode(edit);
+        if self.grid_edit.is_some()
+            && let Some((page, snapshot)) = appearance_edit.split_once(' ')
+        {
+            self.settings_page = match page {
+                "1" => Page::Popup,
+                "2" => Page::Colors,
+                "3" => Page::Behavior,
+                _ => Page::Grid,
+            };
+            self.appearance_edit = AppearanceEdit::restore(snapshot)
+                .or_else(|| Some(AppearanceEdit::new(self.appearance.clone())));
+        }
+    }
+
     pub fn search_text(&self) -> Option<&str> {
         self.search_query.as_deref()
     }
 
+    pub fn language(&self) -> Language {
+        self.appearance.language()
+    }
+
     pub fn replace_sessions(&mut self, sessions: Vec<Session>) {
-        let selected_name = self.selected_session().map(|session| session.name.clone());
+        let selected_id = self.selected_session().map(|session| session.id.clone());
         self.sessions = sessions;
 
         if self.visible_session_count() == 0 {
             self.selected_index = 0;
+            self.focus = Focus::Overview;
             return;
         }
 
-        self.selected_index = selected_name
-            .and_then(|name| {
+        self.selected_index = selected_id
+            .as_ref()
+            .and_then(|id| {
                 self.visible_sessions()
                     .into_iter()
-                    .position(|session| session.name == name)
+                    .position(|session| &session.id == id)
             })
             .unwrap_or_else(|| self.selected_index.min(self.visible_session_count() - 1));
-    }
-
-    pub fn replace_sessions_preserving_preview_for(
-        &mut self,
-        mut sessions: Vec<Session>,
-        preserved_session_id: Option<&str>,
-    ) {
-        if let Some(preserved_session_id) = preserved_session_id
-            && let Some(previous) = self
-                .sessions
-                .iter()
-                .find(|session| session.id == preserved_session_id)
-            && let Some(next) = sessions
-                .iter_mut()
-                .find(|session| session.id == preserved_session_id)
-        {
-            next.preview = previous.preview.clone();
-            next.preview_error = previous.preview_error.clone();
+        if self.selected_session().map(|session| &session.id) != selected_id.as_ref() {
+            self.focus = Focus::Overview;
         }
-
-        self.replace_sessions(sessions);
     }
 
     pub fn move_left(&mut self) {
@@ -311,44 +578,6 @@ pub fn sort_sessions_by_agent_status(sessions: &mut [Session]) {
     sort_sessions_by_agent_status_with_current(sessions, None);
 }
 
-/// Picks the session `tmux-expose next` should jump to: the next one after
-/// the current session in priority order among those whose agent is blocked
-/// on or waiting for you, wrapping around. Cycling (rather than always taking
-/// the most urgent non-current session) matters because a session you just
-/// left usually stays `waiting` — "most urgent" would bounce between the two
-/// oldest waiters and never reach a third. Returns `None` when nothing else
-/// needs you.
-pub fn next_urgent_session<'a>(
-    sessions: &'a [Session],
-    current_session_id: Option<&str>,
-) -> Option<&'a Session> {
-    let mut urgent: Vec<Session> = sessions
-        .iter()
-        .filter(|session| {
-            matches!(
-                session.agent_status,
-                Some(AgentStatus::Attention | AgentStatus::Waiting)
-            )
-        })
-        .cloned()
-        .collect();
-    // No current-session tiebreak here: the current session has to keep its
-    // natural slot so "the one after it" walks the whole list.
-    sort_sessions_by_agent_status(&mut urgent);
-
-    let next = match urgent
-        .iter()
-        .position(|session| Some(session.id.as_str()) == current_session_id)
-    {
-        Some(index) => &urgent[(index + 1) % urgent.len()],
-        None => urgent.first()?,
-    };
-    if Some(next.id.as_str()) == current_session_id {
-        return None;
-    }
-    sessions.iter().find(|session| session.id == next.id)
-}
-
 fn fuzzy_matches(name: &str, query: &str) -> bool {
     let query = query.to_lowercase();
     if query.is_empty() {
@@ -372,10 +601,7 @@ mod tests {
             name: name.to_string(),
             attached: false,
             window_count: 1,
-            current_window: None,
-            last_activity: None,
-            preview: Vec::new(),
-            preview_error: None,
+            windows: Vec::new(),
             agent_status: None,
             agent_status_since: None,
             agent_pane_counts: AgentPaneCounts::default(),
@@ -466,55 +692,6 @@ mod tests {
         assert_eq!(names, vec!["current", "other"]);
     }
 
-    fn triage_sessions() -> Vec<Session> {
-        vec![
-            session_with_agent_status("idle", None, None),
-            session_with_agent_status("c", Some(AgentStatus::Waiting), Some(300)),
-            session_with_agent_status("busy", Some(AgentStatus::Working), Some(1)),
-            session_with_agent_status("a", Some(AgentStatus::Waiting), Some(100)),
-            session_with_agent_status("b", Some(AgentStatus::Waiting), Some(200)),
-        ]
-    }
-
-    fn next_name<'a>(sessions: &'a [Session], current: &str) -> Option<&'a str> {
-        next_urgent_session(sessions, Some(&format!("${current}")))
-            .map(|session| session.name.as_str())
-    }
-
-    #[test]
-    fn next_cycles_through_every_urgent_session_and_wraps() {
-        let sessions = triage_sessions();
-
-        assert_eq!(next_name(&sessions, "a"), Some("b"));
-        assert_eq!(next_name(&sessions, "b"), Some("c"));
-        assert_eq!(next_name(&sessions, "c"), Some("a"));
-    }
-
-    #[test]
-    fn next_from_a_non_urgent_session_goes_to_the_most_urgent() {
-        let mut sessions = triage_sessions();
-        sessions.push(session_with_agent_status(
-            "blocked",
-            Some(AgentStatus::Attention),
-            Some(999),
-        ));
-
-        assert_eq!(next_name(&sessions, "idle"), Some("blocked"));
-        assert_eq!(next_name(&sessions, "busy"), Some("blocked"));
-    }
-
-    #[test]
-    fn next_is_none_when_nothing_else_needs_you() {
-        let sessions = vec![
-            session_with_agent_status("only", Some(AgentStatus::Waiting), Some(1)),
-            session_with_agent_status("busy", Some(AgentStatus::Working), Some(1)),
-        ];
-
-        assert_eq!(next_name(&sessions, "only"), None);
-        assert_eq!(next_name(&sessions, "busy"), Some("only"));
-        assert_eq!(next_name(&[session("idle")], "idle"), None);
-    }
-
     #[test]
     fn agent_sort_breaks_ties_by_oldest_timestamp_first() {
         let mut sessions = vec![
@@ -581,32 +758,6 @@ mod tests {
         app.replace_sessions(vec![session("new"), session("logs"), session("dev")]);
 
         assert_eq!(app.selected_session().unwrap().name, "logs");
-    }
-
-    #[test]
-    fn preserves_preview_for_matching_session_after_refresh() {
-        let mut app = App::new(
-            vec![session("dev"), session("logs")],
-            Some("dev".to_string()),
-        );
-        app.sessions[0].preview = vec!["snapshot".to_string()];
-        app.sessions[0].preview_error = None;
-
-        let mut refreshed_dev = session("dev");
-        refreshed_dev.preview = Vec::new();
-        refreshed_dev.preview_error = Some("Current session preview disabled".to_string());
-
-        let mut refreshed_logs = session("logs");
-        refreshed_logs.preview = vec!["live".to_string()];
-
-        app.replace_sessions_preserving_preview_for(
-            vec![refreshed_dev, refreshed_logs],
-            Some("$dev"),
-        );
-
-        assert_eq!(app.sessions[0].preview, vec!["snapshot".to_string()]);
-        assert_eq!(app.sessions[0].preview_error, None);
-        assert_eq!(app.sessions[1].preview, vec!["live".to_string()]);
     }
 
     #[test]

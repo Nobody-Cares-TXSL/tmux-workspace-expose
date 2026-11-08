@@ -1,409 +1,153 @@
-<div align="center">
-  <h1>tmux.expose</h1>
+# tmux-workspace-expose
 
-  <p><strong>Mission Control-style tmux session switching from a fast terminal UI.</strong></p>
+用卡片浏览 tmux 的 Session、Window 和 Pane。在切换前就能看见窗口的内容、分屏位置，以及哪些 Agent 正在等你处理。
 
-  <p>
-    <a href="https://github.com/cesarferreira/tmux.expose/actions/workflows/rust-tests.yml"><img alt="CI" src="https://github.com/cesarferreira/tmux.expose/actions/workflows/rust-tests.yml/badge.svg"></a>
-    <a href="https://crates.io/crates/tmux-expose"><img alt="Crates.io" src="https://img.shields.io/crates/v/tmux-expose"></a>
-    <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
-  </p>
+![tmux-workspace-expose 实机演示](assets/recording.gif)
 
-  <p>
-    <a href="#install">Install</a>
-    &nbsp;·&nbsp;
-    <a href="#quickstart">Quickstart</a>
-    &nbsp;·&nbsp;
-    <a href="#tmux-plugin">tmux Plugin</a>
-    &nbsp;·&nbsp;
-    <a href="#configuration">Configuration</a>
-  </p>
+[总览截图](assets/screenshot.png) · [设置截图](assets/custom-example.png)
 
-  <br>
+## 功能概览
 
-  <img src="assets/recording.gif" width="880" alt="tmux.expose in action">
-</div>
+- **Session 总览**显示每个 Session 及其 Window 缩略图。进入 **Window 总览**后，每张卡片都显示 Pane 的可见画面和分屏线。
+- **可滚动网格**分别限制 Session 和 Window 每屏显示的行数、列数。超出一屏时可用方向键或鼠标滚轮查看。
+- **工作区管理**支持模糊搜索、重命名、确认关闭，以及一键直达当前 Session 的 Window 总览。
+- **中英文界面**可以在设置里切换，弹窗布局、配色、刷新和 Agent 排序也能直接修改。
+- **Agent 状态**可在卡片上显示运行、等待和需要处理的状态，并把需要关注的会话排到前面。
 
----
+## 安装
 
-## Why tmux.expose
-
-Switching tmux sessions with a list works, but it gives you names instead of context. **tmux.expose** shows every session as a live text thumbnail so you can jump to the right workspace visually.
-
-- **See before switching.** Browse sessions in a responsive grid with live pane previews.
-- **Terminal-native.** A small Rust TUI that runs inside your terminal or a tmux popup.
-- **Color-aware previews.** tmux ANSI colors are preserved in thumbnails.
-- **Fast keyboard flow.** Move with arrows or `hjkl`, switch with `Enter`, leave with `q` or `Esc`.
-- **TPM-ready.** Install it as a tmux plugin and launch with `Alt+e`.
-
-## Install
-
-The shortest path is crates.io:
+需要 Bash、Cargo 和 tmux。本项目在 Linux 的 Alacritty 和 tmux 3.4 上验证过。
 
 ```bash
-cargo install tmux-expose
+git clone https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose.git
+cargo install --locked --path ./tmux-workspace-expose
 ```
 
-## tmux Plugin
-
-Install with [TPM](https://github.com/tmux-plugins/tpm):
+Cargo 包名为 `tmux-workspace-expose`，安装后的命令为 `tmux-expose`。确保 tmux 服务能从 PATH 找到它。使用 [TPM](https://github.com/tmux-plugins/tpm) 时，在 tmux 配置中加入：
 
 ```tmux
-set -g @plugin 'cesarferreira/tmux.expose'
+set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 ```
 
-Reload tmux config, then press `prefix + I` to install plugins.
+重新加载配置后，按 tmux 前缀键再按大写 `I` 安装插件。已有上游插件配置时，替换原来的 `cesarferreira/tmux.expose` 项。
 
-The plugin binds `Alt+e` by default:
+更新时，TPM 会更新插件脚本。要同步更新 `tmux-expose` 二进制，请从更新后的项目目录再次运行 `cargo install --locked --path .`。
+
+手动加载时，用下面的方式执行克隆目录中的插件脚本，并把示例路径改成实际位置：
 
 ```tmux
-Alt+e
+run-shell 'bash ~/src/tmux-workspace-expose/tmux.expose.tmux'
 ```
 
-It opens:
-
-```bash
-tmux display-popup -w 100% -h 100% -E "tmux-expose"
-```
-
-With the default binding, press `Alt+e` again while tmux.expose is open to close it without switching.
-
-
-## Configuration
-
-Customize the tmux plugin before the `@plugin` line:
+如果 tmux 找不到二进制，可在加载插件前指定路径：
 
 ```tmux
-set -g @tmux-expose-key 'E'
-set -g @tmux-expose-key-table 'prefix'
-set -g @tmux-expose-width '100%'
-set -g @tmux-expose-height '100%'
-set -g @tmux-expose-anchor 'center'
-set -g @tmux-expose-style 'bg=colour234'
-set -g @tmux-expose-border-style 'fg=colour245'
-set -g @tmux-expose-selected-color 'yellow'
-set -g @tmux-expose-attached-color 'green'
-set -g @tmux-expose-inactive-color 'white'
-set -g @tmux-expose-vim-keys 'on'
-set -g @tmux-expose-command 'tmux-expose --columns 2'
-
-set -g @plugin 'cesarferreira/tmux.expose'
+set -g @tmux-expose-command '~/.cargo/bin/tmux-expose'
 ```
 
-`@tmux-expose-anchor` accepts `center`, `top`, `bottom`, `left`, or `right`. For example,
-use `set -g @tmux-expose-anchor 'bottom'` with `set -g @tmux-expose-height '50%'` to show
-tmux.expose in the bottom half of the screen.
+## 快捷键
 
-`@tmux-expose-style` maps to `display-popup -s`, and `@tmux-expose-border-style` maps to
-`display-popup -S`.
+| 按键 | 动作 |
+| --- | --- |
+| `Alt+e` | 打开 Session 总览，默认再次按下关闭弹窗 |
+| `Alt+w` | 直接打开当前 Session 的 Window 总览 |
+| `Ctrl+,` / `Shift+F12` | 打开设置 |
+| 方向键 / 鼠标滚轮 | 选择卡片、逐行滚动 |
+| `Tab` / `Shift+Tab` | 在 Window 总览中向前或向后选择 |
+| `Enter` | 进入选中的 Session，或切换到选中的 Window |
+| `q` | 浏览时关闭弹窗 |
+| `Esc` | 返回 Session 总览，或取消当前输入 |
+| `/` | 开始模糊搜索 Session |
+| `r` | 重命名选中的 Session 或 Window，按 `Enter` 保存 |
+| `d` | 显示关闭确认，按 `Enter` 关闭，按 `Esc` 取消 |
 
-### Card colors
+在搜索框输入 `pf` 可以匹配 `project-frontend`。开启 Vim 导航时，用 `hjkl` 移动；搜索时按 `Esc` 会结束编辑并保留筛选结果。
 
-Each session card is highlighted based on its state. Recolor any of them to match your
-theme:
+如果同一个 Window 链接到了多个 Session，关闭它会移除所有链接。
 
-| Option | Highlights | Default |
-|---|---|---|
-| `@tmux-expose-selected-color` | The card under the cursor (title + border) | `yellow` |
-| `@tmux-expose-attached-color` | The session you are currently attached to (title + border) | `green` |
-| `@tmux-expose-inactive-color` | Every other card (title only; the border stays dimmed) | `white` |
+### Alacritty 的 Ctrl+, 映射
 
-Values accept a color name (`yellow`, `cyan`, …), a 256-color index (`colour208` or
-`208`), or a hex value (`#ff8700`). Omit an option to keep its default.
+tmux 3.4 可直接用 `Shift+F12` 打开设置。如需在 Alacritty 使用 `Ctrl+,`，在 `alacritty.toml` 中加入：
 
-For example, a [Dracula](https://draculatheme.com/)-flavored setup:
-
-```tmux
-set -g @tmux-expose-selected-color '#bd93f9'
-set -g @tmux-expose-attached-color '#50fa7b'
-set -g @tmux-expose-inactive-color '#6272a4'
+```toml
+[[keyboard.bindings]]
+key = ","
+mods = "Control"
+chars = "\u001B[24;2~"
 ```
 
-The same colors are also available as CLI flags when running the binary directly:
+## 设置项与取值
+
+打开设置后，按 `Tab` 或点击页签切换页面，用 `↑` / `↓` 或鼠标选中字段。可以直接输入，也可以用 `←` / `→` 调整。按 `Enter` 保存，按 `Esc` 放弃修改。
+
+### 网格
+
+| 设置项 | 取值 / 默认 | 作用 |
+| --- | --- | --- |
+| Session 列数 | 1–12 / 2 | 总览每行最多显示多少张 Session 卡片。 |
+| Session 行数 | 1–12 / 2 | 总览一屏最多显示几行。 |
+| Window 列数 | 1–12 / 2 | Window 卡片每行的上限，Session 卡片里的缩略图也使用这个上限。 |
+| Window 行数 | 1–12 / 2 | Window 卡片每屏的行数上限。 |
+| 卡片间距 | 0–3 / 1 | 相邻卡片之间留多少终端字符格。 |
+
+例如 Session 设为 2 列、2 行时，一屏最多显示 4 张卡片。终端过窄或过矮时，一屏会显示更少，剩余卡片仍可滚动查看。
+
+### 弹窗
+
+| 设置项 | 取值 / 默认 | 作用 |
+| --- | --- | --- |
+| 启动键 | `M-e` | 打开 Session 总览的按键。`M-` 表示 Alt，`C-` 表示 Ctrl。`prefix` 按键表也可用单个字母。`M-w` 和 `C-c` 保留。 |
+| 按键表 | `root`、`prefix` / `root` | `root` 直接按键，`prefix` 先按 tmux 前缀键。 |
+| 宽度 | 1–100% 或 1–1000 个字符格 / `100%` | 决定弹窗横向占用的空间，例如 `80%`。 |
+| 高度 | 1–100% 或 1–1000 个字符格 / `100%` | 决定弹窗纵向占用的空间。 |
+| 停靠 | `center`、`top`、`bottom`、`left`、`right` / `center` | 决定弹窗居中或靠哪一边。 |
+| 弹窗背景 | 颜色或 `default` / `default` | 设置 tmux 弹窗的背景。 |
+| 弹窗边框 | 颜色或 `default` / `default` | 设置 tmux 弹窗外框的颜色。 |
+| Vim 导航 | `on`、`off` / `off` | 开启后支持 `hjkl` 和保留筛选的搜索模式。 |
+
+宽高、停靠、背景和边框在下次打开弹窗时生效。独立的设置快捷键始终打开全尺寸设置页，方便把过小的尺寸改回来。
+
+### 配色
+
+颜色可以输入名称、`colour0` 到 `colour255`，或 `#RRGGBB`。
+
+| 设置项 | 默认 | 作用 |
+| --- | --- | --- |
+| 选中卡片 | `yellow` | 当前选中项的高亮颜色。 |
+| 当前 Session | `green` | 当前连接的 Session 卡片颜色。 |
+| 普通卡片 | `white` | 其他 Session 卡片的标题颜色。 |
+| Agent 需处理 | `#ff5555` | Agent 遇到需要人工处理事项时的标记颜色。 |
+| Agent 等待 | `#ffb86c` | Agent 等待回复时的标记颜色。 |
+| Agent 运行中 | `#8be9fd` | Agent 工作时的标记颜色。 |
+
+### 行为
+
+| 设置项 | 取值 / 默认 | 作用 |
+| --- | --- | --- |
+| 界面语言 | `zh`、`en` / `zh` | 切换简体中文或英文，保存后立即更新。 |
+| Agent 优先排序 | `on`、`off` / `on` | `on` 把需要处理或等待回复的 Session 排到前面，`off` 保留 tmux 的列表顺序。Agent 标记仍会显示。 |
+| 布局刷新 | 1–60000 毫秒 / `1500` | 多久重新读取 Session、Window、Pane 的结构和 Agent 状态。 |
+| 后台 Pane 刷新 | 1–60000 毫秒 / `1500` | 未选中 Session 的 Pane 预览多久更新一次。 |
+| 活跃 Pane 刷新 | 1–60000 毫秒 / `300` | 当前选中 Window 的活跃 Pane 预览多久更新一次。 |
+| 每批最多抓取 | 1–32 / `4` | 一批最多同时抓取多少个 Pane 的画面。 |
+
+网格设置保存在 `$XDG_CONFIG_HOME/tmux-expose/grid.conf`，其余保存在同目录下的 `appearance.conf`。未设置 `XDG_CONFIG_HOME` 时使用 `~/.config`。已保存的值优先于对应的启动参数；`--columns` 仍可覆盖当次启动的 Session 列数。
+
+终端缩放后，弹窗会按新尺寸打开并恢复选中项。读取布局或画面失败时，插件会保留可用的预览并重试。
+
+## Agent 状态提醒
+
+在对应 Pane 中运行以下命令可以手动标记。需要自动更新时，由 Agent 的 hook 调用相应命令。
 
 ```bash
-tmux-expose --selected-color '#bd93f9' --attached-color '#50fa7b' --inactive-color '#6272a4'
+tmux-expose agent-status working
+tmux-expose agent-status waiting
+tmux-expose agent-status attention
+tmux-expose agent-status clear
 ```
 
-### Agent status (Claude Code, and other agents)
+例如，在一个 Pane 里标记 `waiting`，再按 `Alt+e`，对应的 Session 卡片会提示它在等待回复。处理完后，在原 Pane 运行 `tmux-expose agent-status clear` 清除标记。`attention` 适合权限确认、缺少输入等需要人介入的事件。Agent 状态由显式命令写入，插件不会从终端文本猜测状态。
 
-If you run coding agents inside tmux panes, tmux.expose can sort and badge sessions by
-whether an agent in them is waiting on you — instead of showing every session in the same
-flat, alphabetical order regardless of what's actually going on inside it.
+## 来源与许可证
 
-This works on **any agent that can run a shell command on state changes**. No config is
-required to make tmux.expose display it — the moment something writes the tmux pane
-options below, the grid picks it up on its next refresh:
-
-| tmux pane option | Meaning |
-|---|---|
-| `@agent_status` | `working`, `waiting`, or `attention` |
-| `@agent_status_since` | Unix timestamp of when that status started |
-
-`working` means the agent is actively running. `waiting` means its turn just ended and
-it's idle on you. `attention` means it's blocked on something stronger, like a permission
-prompt. A session's card takes the *worst* status across all of its panes (`attention` >
-`waiting` > `working`), so a multi-agent session never hides a stuck pane behind a busy
-one — and by default, sessions with a waiting or blocked agent sort to the top of the
-grid, oldest-waiting first, and the cursor starts on the top one instead of your current
-session.
-
-A single tracked pane gets a plain label on the card's bottom border:
-
-```
-⏳ awaiting reply
-```
-
-A session with more than one agent pane always spells out its *worst* status in words —
-that's the one setting the card's color and sort position, so it's the one thing you need
-to read at a glance — and shows the rest as compact counts:
-
-```
-‼ needs you · ⏳2 · ⚙1
-```
-
-(Words instead of a bare glyph+count everywhere is deliberate: emoji rendering varies by
-terminal font, so a symbol that fails to render is silent for the status that matters
-most.)
-
-The binary ships a one-shot helper for setting these, so nothing but `tmux-expose` itself
-needs to be on `PATH`:
-
-```bash
-tmux-expose agent-status working    # agent just started a turn
-tmux-expose agent-status waiting    # agent's turn ended, idle on you
-tmux-expose agent-status attention  # agent is blocked (e.g. needs a permission)
-tmux-expose agent-status clear      # agent/session is done — remove the marker
-```
-
-It reads `$TMUX_PANE` to know which pane to tag and no-ops outside tmux, so it's safe to
-wire into any hook without guarding it yourself.
-
-#### Claude Code setup
-
-Add this to `~/.claude/settings.json` (global — applies to every project) or a project's
-own `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status working" }] }
-    ],
-    "Stop": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status waiting" }] }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "",
-        "hooks": [{ "type": "command", "command": "tmux-expose agent-status working" }]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "permission_prompt",
-        "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "matcher": "",
-        "hooks": [{ "type": "command", "command": "tmux-expose agent-status clear" }]
-      }
-    ]
-  }
-}
-```
-
-If you already have a `hooks` block, merge these events into it rather than replacing it.
-Restart (or start a new) Claude Code session afterwards — hooks are read once at session
-start, so a session already running won't pick up an edit to `settings.json`.
-
-Other agents work the same way: run `tmux-expose agent-status <word>` from whatever hook,
-lifecycle script, or wrapper that agent exposes.
-
-#### Card colors and sort order
-
-Sensible defaults ship with the binary, so none of this is required — only set it to
-match your theme or to opt out of the sort:
-
-| Option | Highlights | Default |
-|---|---|---|
-| `@tmux-expose-attention-color` | A session with a pane blocked on you | `#ff5555` |
-| `@tmux-expose-waiting-color` | A session where an agent's turn just ended | `#ffb86c` |
-| `@tmux-expose-working-color` | A session with an agent still running | `#8be9fd` |
-| `@tmux-expose-agent-sort` | Set to `off` to keep tmux's own session order instead | `on` |
-
-```tmux
-set -g @tmux-expose-attention-color '#ff5555'
-set -g @tmux-expose-waiting-color '#ffb86c'
-set -g @tmux-expose-working-color '#8be9fd'
-set -g @tmux-expose-agent-sort 'on'
-```
-
-Also available as CLI flags: `--attention-color`, `--waiting-color`, `--working-color`,
-`--no-agent-sort`.
-
-#### Jump to the next agent
-
-To triage without opening the picker, bind a key to `tmux-expose next`. Each press
-switches to the next session whose agent is blocked on or waiting for you, in the same
-priority order as the grid, and wraps around, so repeated presses visit every one of them
-instead of bouncing between the two oldest. If nothing else needs you, it shows a brief
-message and stays put.
-
-| Option | Description | Default |
-|---|---|---|
-| `@tmux-expose-next-key` | Key that jumps to the next agent session | unbound |
-| `@tmux-expose-next-key-table` | Key table for that key | `prefix` |
-| `@tmux-expose-binary` | Executable `next` runs, if different from the picker | derived from `@tmux-expose-command` |
-
-```tmux
-set -g @tmux-expose-next-key 'N'   # <prefix> N
-```
-
-`next` normally reuses the executable named in `@tmux-expose-command`. If that value quotes
-a path containing a space (e.g. `'/opt/my tools/tmux-expose' --columns 2`), set
-`@tmux-expose-binary` explicitly rather than relying on it being parsed out:
-
-```tmux
-set -g @tmux-expose-binary '/opt/my tools/tmux-expose'
-```
-
-From a shell inside tmux you can also run `tmux-expose next` directly.
-
-### Vim navigation
-
-Set `@tmux-expose-vim-keys 'on'` (or run `tmux-expose --vim`) to switch the picker to modal
-vim keys. It is off by default, leaving the standard type-to-filter behavior unchanged.
-
-When enabled, the picker starts in **normal** mode:
-
-| Key | Action |
-|---|---|
-| `h` `j` `k` `l` (or arrows) | Move the selection |
-| `/` | Enter search mode |
-| `Enter` | Switch to the selected session |
-| `q` / `Esc` | Quit |
-
-Pressing `/` enters **search** mode, where typing fuzzy-filters as usual (so `h/j/k/l`
-become text again). `Esc` commits whatever you typed as a filter and drops back into
-**normal** mode — Telescope-style — so `hjkl` browses the filtered results instead of
-typing into them; `Enter` switches straight from either mode. Press `/` again to start a
-fresh search, or `Esc` a second time (from normal mode, with a filter still applied) to
-clear it. Escaping an empty query cancels instead of applying an empty filter.
-
-> **Note:** `@tmux-expose-vim-keys` works by appending `--vim` to `@tmux-expose-command`
-> (which defaults to `tmux-expose`). If you point `@tmux-expose-command` at a custom wrapper
-> script, make sure it accepts `--vim` — or set the flag there yourself instead. The
-> `@tmux-expose-*-color` options behave the same way.
-
-## Custom Example
-
-This configuration binds tmux.expose to `prefix + s` and opens it as a bottom-anchored popup
-using 60% of the screen height:
-
-```tmux
-set -g @tmux-expose-key 's'
-set -g @tmux-expose-key-table 'prefix'
-set -g @tmux-expose-width '100%'
-set -g @tmux-expose-height '60%'
-set -g @tmux-expose-anchor 'bottom'
-set -g @tmux-expose-style 'bg=colour234'
-set -g @tmux-expose-border-style 'fg=colour245'
-
-set -g @plugin 'cesarferreira/tmux.expose'
-```
-
-<p align="center">
-  <img src="assets/custom-example.png" width="880" alt="Custom tmux.expose popup example">
-</p>
-
-It produces a popup equivalent to:
-
-```bash
-tmux display-popup -w 100% -h 60% -y '#{popup_pane_bottom}' -s 'bg=colour234' -S 'fg=colour245' -e TMUX_EXPOSE_TOGGLE_KEY=s -E "tmux-expose"
-```
-
-
-Use a direct binding if you do not use TPM:
-
-```tmux
-bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -E "tmux-expose"
-```
-
-<a id="quickstart"></a>
-## Quickstart
-
-Run the UI directly inside tmux:
-
-```bash
-tmux-expose
-```
-
-Or open it in a tmux popup:
-
-```bash
-tmux display-popup -w 100% -h 100% -E "tmux-expose"
-```
-
-By default, thumbnails are sized into a balanced grid that fits all sessions on screen. Override the layout when you want larger previews or a fixed grid:
-
-```bash
-tmux-expose --thumbnail-width 48
-tmux-expose --columns 2
-tmux-expose --thumbnail-width 48 --columns 2
-```
-
-Refresh interval defaults to 500ms:
-
-```bash
-tmux-expose --refresh-interval 500
-```
-
-Recolor the card highlights (names, 256-color indices, or hex values are accepted):
-
-```bash
-tmux-expose --selected-color cyan --attached-color green --inactive-color white
-```
-
-## Controls
-
-| Key | Action |
-|---|---|
-| `Type` | Filter sessions by fuzzy name |
-| `Arrow keys` | Move selection |
-| `Mouse click` | Switch to clicked session |
-| `Backspace` | Edit search query |
-| `Ctrl-W` | Delete the previous word of the search query |
-| `Ctrl-U` | Clear the search query (keeps searching) |
-| `Esc` while searching | Clear search |
-| `Enter` | Switch to selected session |
-| `Esc` / `Ctrl-C` | Quit without switching |
-
-Prefer vim keys? See [Vim navigation](#vim-navigation) for an opt-in `hjkl` mode.
-
-<a id="tmux-plugin"></a>
-
-
-## macOS Gesture Integration
-
-Use BetterTouchTool, Hammerspoon, Raycast, or another automation tool to trigger:
-
-```bash
-tmux display-popup -w 100% -h 100% -E "tmux-expose"
-```
-
-The app itself is terminal-only and does not depend on macOS-specific APIs.
-
-## Development
-
-Before opening a PR, run:
-
-```bash
-make check
-```
-
-## License
-
-MIT &copy; Cesar Ferreira
+本项目基于 Cesar Ferreira 的 [tmux.expose](https://github.com/cesarferreira/tmux.expose) 二次开发，保留上游版权声明和 [MIT 许可证](LICENSE)。

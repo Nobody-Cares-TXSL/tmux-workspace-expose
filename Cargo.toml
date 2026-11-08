@@ -1,14 +1,22 @@
 [package]
-name = "tmux-expose"
-version = "0.8.0"
+name = "tmux-workspace-expose"
+version = "0.1.0"
 edition = "2024"
-description = "Mission Control-style tmux session switcher with live terminal previews"
+description = "Browse tmux sessions, windows, and panes in a workspace overview"
 license = "MIT"
-repository = "https://github.com/cesarferreira/tmux.expose"
-homepage = "https://github.com/cesarferreira/tmux.expose"
+publish = false
+repository = "https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose"
+homepage = "https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose"
 readme = "README.md"
 keywords = ["tmux", "terminal", "tui", "session", "switcher"]
 categories = ["command-line-utilities"]
+
+[lib]
+name = "tmux_expose"
+
+[[bin]]
+name = "tmux-expose"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
