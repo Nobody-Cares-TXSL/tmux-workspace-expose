@@ -2,10 +2,8 @@ use crate::appearance::{Appearance, AppearanceEdit, Language, Page, VIM_KEYS};
 use crate::grid::{Settings, SettingsEdit};
 
 /// A Claude Code (or other agent) pane's status, as written by an external
-/// hook into the tmux pane option `@agent_status`. Ordered least-to-most
-/// severe so the derived `Ord` can be used to pick the worst value when
-/// folding a session's panes down to one badge: `Attention` (blocked on
-/// you) outranks `Waiting` (its turn just ended) outranks `Working` (still running).
+/// hook into the tmux pane option `@agent_status`. The session badge uses
+/// the order in [Self::ALL], from `Working` through `Waiting` to `Attention`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AgentStatus {
     Working,
