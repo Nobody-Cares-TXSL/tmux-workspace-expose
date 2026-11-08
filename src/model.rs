@@ -298,6 +298,17 @@ impl App {
         }
     }
 
+    pub(crate) fn settings_field(&self) -> usize {
+        let first = self.settings_page.fields().start;
+        match self.settings_page {
+            Page::Grid => self.grid_edit.as_ref().map_or(first, |edit| edit.field),
+            _ => self
+                .appearance_edit
+                .as_ref()
+                .map_or(first, |edit| edit.field),
+        }
+    }
+
     pub fn workspace_target(&self) -> Option<WorkspaceTarget> {
         let session = self.selected_session()?;
         match self.focus {

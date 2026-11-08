@@ -281,19 +281,13 @@ pub fn handle_mouse(
     grid_area: Rect,
     forced_columns: Option<usize>,
 ) {
-    if let Some(draft) = &app.grid_edit {
+    if app.grid_edit.is_some() {
         let area = Rect {
             height: grid_area.height.saturating_add(ui::FOOTER_HEIGHT),
             ..grid_area
         };
         let fields = app.settings_page.fields();
-        let selected = if app.settings_page == Page::Grid {
-            draft.field
-        } else {
-            app.appearance_edit
-                .as_ref()
-                .map_or(fields.start, |edit| edit.field)
-        };
+        let selected = app.settings_field();
         let (panel, rows) = ui::settings_panel(area, selected, fields);
         let inner = panel.inner(ratatui::layout::Margin::new(1, 1));
         if mouse.kind == MouseEventKind::Down(MouseButton::Left)

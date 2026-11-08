@@ -217,13 +217,7 @@ fn render_settings(frame: &mut Frame<'_>, app: &App, area: Rect, selected_color:
     let Some(grid) = &app.grid_edit else { return };
     let lang = app.language();
     let page = app.settings_page;
-    let selected = if page == Page::Grid {
-        grid.field
-    } else {
-        app.appearance_edit
-            .as_ref()
-            .map_or(page.fields().start, |edit| edit.field)
-    };
+    let selected = app.settings_field();
     let (panel, fields) = settings_panel(area, selected, page.fields());
     frame.render_widget(Clear, panel);
     let mut tab_spans = Vec::new();
