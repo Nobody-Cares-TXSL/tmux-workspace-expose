@@ -6,6 +6,9 @@ use std::{
 
 use tmux_expose::{model::App, tmux::run_tmux};
 
+const RESIZE_CONFIRM_DELAY: Duration = Duration::from_millis(220);
+const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
 /// tmux 3.4 caps an open popup at its original dimensions. Return to its
 /// launcher once the client settles so a fresh popup uses the new dimensions.
 pub struct Resize {
@@ -13,7 +16,7 @@ pub struct Resize {
     state: PathBuf,
     opened_at_size: String,
     candidate: Option<String>,
-    checked_at: Instant,
+    next_check: Instant,
 }
 
 impl Resize {
@@ -37,16 +40,22 @@ impl Resize {
             state,
             opened_at_size,
             candidate: None,
-            checked_at: Instant::now(),
+            next_check: Instant::now() + RESIZE_CONFIRM_DELAY,
         })
     }
 
+    pub fn on_resize(&mut self) {
+        if self.candidate.is_none() {
+            self.next_check = Instant::now();
+        }
+    }
+
     pub fn reopen(&mut self, app: &App) -> bool {
-        if self.checked_at.elapsed() < Duration::from_millis(220) {
+        let now = Instant::now();
+        if now < self.next_check {
             return false;
         }
-        self.checked_at = Instant::now();
-        let Ok(output) = run_tmux(
+        let output = run_tmux(
             &[
                 "display-message",
                 "-p",
@@ -55,18 +64,49 @@ impl Resize {
                 "#{client_width} #{client_height}",
             ],
             "Could not read tmux client dimensions",
-        ) else {
-            return false;
-        };
-        let size = output.trim().to_owned();
+        );
+        let size = output.as_deref().unwrap_or_default().trim();
+        self.observe_size(size, Instant::now()) && fs::write(&self.state, app.popup_state()).is_ok()
+    }
+
+    fn observe_size(&mut self, size: &str, now: Instant) -> bool {
         if size.is_empty() || size == self.opened_at_size {
             self.candidate = None;
+            self.next_check = now + IDLE_CHECK_INTERVAL;
             return false;
         }
-        if self.candidate.as_ref() != Some(&size) {
-            self.candidate = Some(size);
+        self.next_check = now + RESIZE_CONFIRM_DELAY;
+        if self.candidate.as_deref() != Some(size) {
+            self.candidate = Some(size.to_owned());
             return false;
         }
-        fs::write(&self.state, app.popup_state()).is_ok()
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slows_idle_checks_but_requires_two_matching_resize_samples() {
+        let now = Instant::now();
+        let mut resize = Resize {
+            client: String::new(),
+            state: PathBuf::new(),
+            opened_at_size: "80 24".into(),
+            candidate: None,
+            next_check: now,
+        };
+        assert!(!resize.observe_size("80 24", now));
+        assert_eq!(resize.next_check, now + IDLE_CHECK_INTERVAL);
+        assert!(!resize.observe_size("100 28", now));
+        assert_eq!(resize.next_check, now + RESIZE_CONFIRM_DELAY);
+        resize.on_resize();
+        assert_eq!(resize.next_check, now + RESIZE_CONFIRM_DELAY);
+        assert!(!resize.observe_size("101 28", now));
+        assert!(resize.observe_size("101 28", now + RESIZE_CONFIRM_DELAY));
+        assert!(!resize.observe_size("", now));
+        assert!(!resize.observe_size("101 28", now));
     }
 }

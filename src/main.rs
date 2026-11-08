@@ -235,7 +235,11 @@ fn main() -> Result<()> {
                     let grid_area = current_grid_area(&terminal)?;
                     input::handle_mouse(&mut app, mouse, grid_area, forced_columns);
                 }
-                Event::Resize(_, _) => {}
+                Event::Resize(_, _) => {
+                    if let Some(resize) = &mut popup_resize {
+                        resize.on_resize();
+                    }
+                }
                 _ => {}
             }
         }
