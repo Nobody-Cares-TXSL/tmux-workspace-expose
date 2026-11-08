@@ -198,17 +198,12 @@ fn main() -> Result<()> {
         .and_then(|key| input::ToggleKey::from_tmux_key(&key));
     let mut last_refresh = Instant::now();
     let mut topology_available = app.error.is_none();
+    let forced_columns = cli.columns.map(usize::from);
+    let mut grid_area = Rect::default();
+    let mut columns = 1;
+    let mut redraw = true;
 
     loop {
-        let forced_columns = cli.columns.map(usize::from);
-        let grid_area = current_grid_area(&terminal)?;
-        let viewport = ui::workspace_viewport(&app, grid_area, forced_columns);
-        match app.focus {
-            model::Focus::Overview => app.session_row = viewport.first_row,
-            model::Focus::Session => app.window_row = viewport.first_row,
-        }
-        terminal.draw(|frame| ui::render_view(frame, &app, colors, forced_columns, &previews))?;
-
         if app.should_quit {
             break;
         }
@@ -219,9 +214,23 @@ fn main() -> Result<()> {
                 Ok(false) => {}
                 Err(error) => {
                     app.error = Some(error.to_string());
+                    redraw = true;
                 }
             }
             app.should_switch = false;
+        }
+
+        if std::mem::take(&mut redraw) {
+            terminal.draw(|frame| {
+                grid_area = ui::grid_area(frame.area());
+                let viewport = ui::workspace_viewport(&app, grid_area, forced_columns);
+                columns = viewport.columns;
+                match app.focus {
+                    model::Focus::Overview => app.session_row = viewport.first_row,
+                    model::Focus::Session => app.window_row = viewport.first_row,
+                }
+                ui::render_view(frame, &app, colors, forced_columns, &previews);
+            })?;
         }
 
         if event::poll(Duration::from_millis(50))? {
@@ -229,13 +238,22 @@ fn main() -> Result<()> {
                 Event::Key(key)
                     if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                 {
-                    input::handle_key_with_toggle(&mut app, key, viewport.columns, toggle_key);
+                    input::handle_key_with_toggle(&mut app, key, columns, toggle_key);
+                    redraw = true;
                 }
-                Event::Mouse(mouse) => {
-                    let grid_area = current_grid_area(&terminal)?;
+                Event::Mouse(mouse)
+                    if matches!(
+                        mouse.kind,
+                        event::MouseEventKind::Down(_)
+                            | event::MouseEventKind::ScrollUp
+                            | event::MouseEventKind::ScrollDown
+                    ) =>
+                {
                     input::handle_mouse(&mut app, mouse, grid_area, forced_columns);
+                    redraw = true;
                 }
                 Event::Resize(_, _) => {
+                    redraw = true;
                     if let Some(resize) = &mut popup_resize {
                         resize.on_resize();
                     }
@@ -261,6 +279,7 @@ fn main() -> Result<()> {
                 Err(error) => {
                     app.error = Some(error.to_string());
                     last_refresh = Instant::now();
+                    redraw = true;
                 }
             }
         }
@@ -273,19 +292,25 @@ fn main() -> Result<()> {
         if refresh_topology {
             match tmux::list_workspace_sessions() {
                 Ok(mut sessions) => {
-                    app.current_session_name = order_sessions(
+                    let current_name = order_sessions(
                         &mut sessions,
                         current_session_id.as_deref(),
                         app.appearance.0[AGENT_SORT] == "on",
                     );
                     topology_available = true;
-                    previews.reconcile(&sessions);
-                    app.replace_sessions(sessions);
-                    app.error = None;
+                    redraw |= app.error.take().is_some();
+                    if app.sessions != sessions || app.current_session_name != current_name {
+                        app.current_session_name = current_name;
+                        previews.reconcile(&sessions);
+                        app.replace_sessions(sessions);
+                        redraw = true;
+                    }
                 }
                 Err(error) => {
                     topology_available = false;
-                    app.error = Some(error.to_string());
+                    let message = error.to_string();
+                    redraw |= app.error.as_deref() != Some(message.as_str());
+                    app.error = Some(message);
                 }
             }
             last_refresh = Instant::now();
@@ -305,7 +330,7 @@ fn main() -> Result<()> {
             let active_pane = app
                 .selected_window()
                 .and_then(|window| window.panes.iter().find(|pane| pane.active));
-            previews.refresh(
+            redraw |= previews.refresh(
                 &visible,
                 selected.map(|session| session.id.as_str()),
                 active_pane.map(|pane| pane.id.as_str()),
@@ -428,11 +453,6 @@ fn switch_selection(app: &App, client: Option<&str>) -> Result<bool> {
     };
     tmux::switch_client_for(client, &format!("{}:{}", session.id, window.id))?;
     Ok(true)
-}
-
-fn current_grid_area(terminal: &Terminal<CrosstermBackend<io::Stdout>>) -> Result<Rect> {
-    let area = terminal.size().context("failed to read terminal size")?;
-    Ok(ui::grid_area(Rect::new(0, 0, area.width, area.height)))
 }
 
 #[cfg(test)]

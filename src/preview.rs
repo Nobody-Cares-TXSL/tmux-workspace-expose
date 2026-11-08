@@ -156,7 +156,7 @@ impl PreviewCache {
         selected_session: Option<&str>,
         selected_pane: Option<&str>,
         policy: RefreshPolicy,
-    ) {
+    ) -> bool {
         let due = self.due_panes(
             visible,
             selected_session,
@@ -165,6 +165,7 @@ impl PreviewCache {
             policy,
         );
         thread::scope(|scope| {
+            let mut changed = false;
             let jobs: Vec<_> = due
                 .into_iter()
                 .map(|id| (id, scope.spawn(move || capture_pane_preview(id))))
@@ -173,9 +174,10 @@ impl PreviewCache {
                 let result = job
                     .join()
                     .unwrap_or_else(|_| Err(anyhow::anyhow!("capture worker failed")));
-                self.record(id.to_owned(), Instant::now(), result);
+                changed |= self.record(id.to_owned(), Instant::now(), result);
             }
-        });
+            changed
+        })
     }
 
     fn due_panes<'a>(
@@ -214,7 +216,7 @@ impl PreviewCache {
             .collect()
     }
 
-    fn record(&mut self, id: String, now: Instant, result: anyhow::Result<Vec<String>>) {
+    fn record(&mut self, id: String, now: Instant, result: anyhow::Result<Vec<String>>) -> bool {
         let preview = self.by_pane.entry(id).or_insert_with(|| CachedPreview {
             lines: Vec::new(),
             failed: false,
@@ -222,13 +224,17 @@ impl PreviewCache {
             rendered: Default::default(),
         });
         preview.attempted_at = now;
-        preview.failed = result.is_err();
+        let failed = result.is_err();
+        let changed = preview.failed != failed;
+        preview.failed = failed;
         if let Ok(lines) = result
             && lines != preview.lines
         {
             preview.lines = lines;
             preview.rendered = Default::default();
+            return true;
         }
+        changed
     }
 }
 
@@ -538,6 +544,21 @@ mod tests {
             preview.rendered(5, 1, PreviewView::Screen)[0].spans[0].content,
             "new"
         );
+    }
+
+    #[test]
+    fn only_changed_preview_content_or_failure_needs_a_redraw() {
+        let mut cache = PreviewCache::default();
+        let now = Instant::now();
+        assert!(cache.record("%2".into(), now, Ok(vec!["output".into()])));
+        assert!(!cache.record("%2".into(), now, Ok(vec!["output".into()])));
+        assert!(cache.record("%2".into(), now, Err(anyhow::anyhow!("capture failed"))));
+        assert!(!cache.record(
+            "%2".into(),
+            now,
+            Err(anyhow::anyhow!("capture failed again"))
+        ));
+        assert!(cache.record("%2".into(), now, Ok(vec!["output".into()])));
     }
 
     #[test]
