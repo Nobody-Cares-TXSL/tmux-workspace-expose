@@ -438,6 +438,66 @@ mod tests {
     }
 
     #[test]
+    fn session_overview_renders_pane_screens_and_split_dividers() {
+        use crate::{model::App, ui};
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut sessions = sessions();
+        for session in &mut sessions {
+            let panes = &mut session.windows[0].panes;
+            panes[0].width = 40;
+            panes[1].left = 41;
+            panes[1].width = 39;
+        }
+        sessions[1].windows[0].panes[0].id = "%5".into();
+        let panes = &mut sessions[0].windows[0].panes;
+        panes[1].height = 11;
+        panes.push(PanePreview {
+            id: "%4".into(),
+            index: 2,
+            top: 12,
+            height: 12,
+            ..panes[1].clone()
+        });
+        let mut cache = PreviewCache::default();
+        for (id, height) in [("%1", 24), ("%2", 11), ("%3", 24), ("%4", 12)] {
+            let mut lines = vec![String::new(); height];
+            lines[0] = format!("top-{id}");
+            lines[height - 1] = format!("bottom-{id}");
+            cache.record(id.into(), Instant::now(), Ok(lines));
+        }
+
+        let app = App::new(sessions, None);
+        let mut terminal = Terminal::new(TestBackend::new(160, 29)).unwrap();
+        terminal
+            .draw(|frame| ui::render_view(frame, &app, ui::CardColors::default(), None, &cache))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row = |y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+
+        let first = row(2);
+        assert!(
+            first.contains("top-%1") && first.contains("top-%3"),
+            "{first}"
+        );
+        assert!(
+            first.contains("│top-%2") && first.contains("│top-%3"),
+            "{first}"
+        );
+        assert!(row(13).contains("┼─"));
+        assert!(row(14).contains("│top-%4"));
+        let last = row(25);
+        assert!(
+            last.contains("bottom-%1") && last.contains("bottom-%3"),
+            "{last}"
+        );
+    }
+
+    #[test]
     fn refreshes_visible_panes_in_priority_order_without_duplicate_captures() {
         let sessions = sessions();
         let visible = [&sessions[1], &sessions[0]];

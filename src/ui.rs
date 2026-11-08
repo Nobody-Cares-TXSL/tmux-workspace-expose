@@ -570,7 +570,7 @@ fn render_grid_view(
             } else {
                 None
             };
-            let tiles = window_tiles(session, card_area, windows, app.grid.gap, window.is_some());
+            let tiles = window_tiles(session, card_area, windows, app.grid.gap);
             render_workspace_card(frame, tiles, previews, window, colors.selected, lang);
         }
     }
@@ -723,7 +723,7 @@ fn workspace_layout<'a>(
         .position(|window| selected == Some(window.index))
         .unwrap_or(0);
     let viewport = window_viewport(card, settings.windows, windows.len(), selected_index, first);
-    window_tiles(session, card, viewport, settings.gap, selected.is_some())
+    window_tiles(session, card, viewport, settings.gap)
 }
 
 fn window_tiles(
@@ -731,7 +731,6 @@ fn window_tiles(
     card: Rect,
     viewport: Viewport,
     gap: u16,
-    full_preview: bool,
 ) -> Vec<WindowTile<'_>> {
     let inner = card.inner(Margin::new(1, 1));
     if inner.is_empty() {
@@ -742,11 +741,11 @@ fn window_tiles(
         .map(|(index, area)| {
             let window = &session.windows[index];
             let content = Block::default().borders(window_borders(area)).inner(area);
-            let (panes, compact) = pane_layout(window, content, full_preview);
+            let (panes, compact) = pane_layout(window, content);
             WindowTile {
                 window,
                 area,
-                screen: full_preview && !compact,
+                screen: !compact,
                 panes,
             }
         })
@@ -763,14 +762,10 @@ fn window_borders(area: Rect) -> Borders {
     }
 }
 
-fn pane_layout(
-    window: &WindowPreview,
-    area: Rect,
-    split: bool,
-) -> (Vec<(&PanePreview, Rect)>, bool) {
+fn pane_layout(window: &WindowPreview, area: Rect) -> (Vec<(&PanePreview, Rect)>, bool) {
     let mut scaled = Vec::new();
     for pane in &window.panes {
-        let rect = scale_pane(pane, window, area, split);
+        let rect = scale_pane(pane, window, area);
         if rect.is_empty()
             || scaled
                 .iter()
@@ -783,15 +778,15 @@ fn pane_layout(
     (scaled, false)
 }
 
-fn scale_pane(pane: &PanePreview, window: &WindowPreview, area: Rect, split: bool) -> Rect {
+fn scale_pane(pane: &PanePreview, window: &WindowPreview, area: Rect) -> Rect {
     let x = |edge: u16| scale_edge(edge, window.width, area.width);
     let y = |edge: u16| scale_edge(edge, window.height, area.height);
     let mut left = x(pane.left);
     let mut top = y(pane.top);
-    if split && pane.left > 0 {
+    if pane.left > 0 {
         left = left.max(x(pane.left - 1) + 1);
     }
-    if split && pane.top > 0 {
+    if pane.top > 0 {
         top = top.max(y(pane.top - 1) + 1);
     }
     let right = x(pane.left.saturating_add(pane.width));
@@ -1267,8 +1262,9 @@ mod tests {
         let settings = Settings::default();
         let layout = workspace_layout(&session, area, None, settings, 0);
         assert_eq!(layout.len(), 2);
+        assert!(layout.iter().all(|tile| tile.screen));
         assert_eq!(layout[0].panes[0].1, Rect::new(12, 6, 8, 10));
-        assert_eq!(layout[0].panes[1].1, Rect::new(20, 6, 9, 10));
+        assert_eq!(layout[0].panes[1].1, Rect::new(21, 6, 8, 10));
         assert_eq!(layout[1].panes[0].1, Rect::new(32, 6, 18, 10));
 
         let area = Rect::new(0, 0, 100, 24);
