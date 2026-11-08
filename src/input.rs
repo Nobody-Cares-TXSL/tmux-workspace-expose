@@ -5,7 +5,6 @@ use ratatui::layout::{Position, Rect};
 
 use crate::{
     appearance::Page,
-    grid::FIELD_NAMES,
     model::{App, Focus, WorkspaceDialog},
     ui,
 };
@@ -130,22 +129,15 @@ fn handle_grid_key(app: &mut App, key: KeyEvent) {
         return;
     }
     app.grid_error = None;
+    let fields = app.settings_page.fields();
     if app.settings_page != Page::Grid {
         let Some(edit) = &mut app.appearance_edit else {
             return;
         };
-        let fields = app.settings_page.fields();
         match key.code {
-            KeyCode::Up => edit.select(if edit.field == fields.start {
-                fields.end - 1
-            } else {
-                edit.field - 1
-            }),
-            KeyCode::Down => edit.select(if edit.field + 1 == fields.end {
-                fields.start
-            } else {
-                edit.field + 1
-            }),
+            KeyCode::Up | KeyCode::Down => {
+                edit.select(cycle_field(edit.field, fields, key.code == KeyCode::Up))
+            }
             KeyCode::Left | KeyCode::Right => edit.adjust(key.code == KeyCode::Right),
             KeyCode::Char(ch) if ch.is_ascii_graphic() && is_typeable_filter_key(key) => {
                 edit.insert(ch)
@@ -159,8 +151,9 @@ fn handle_grid_key(app: &mut App, key: KeyEvent) {
         return;
     };
     match key.code {
-        KeyCode::Up => draft.select((draft.field + FIELD_NAMES.len() - 1) % FIELD_NAMES.len()),
-        KeyCode::Down => draft.select((draft.field + 1) % FIELD_NAMES.len()),
+        KeyCode::Up | KeyCode::Down => {
+            draft.select(cycle_field(draft.field, fields, key.code == KeyCode::Up))
+        }
         KeyCode::Left | KeyCode::Right => draft.adjust(key.code == KeyCode::Right),
         KeyCode::Char(ch) if ch.is_ascii_digit() && key.modifiers == KeyModifiers::NONE => {
             draft.digit(ch)
@@ -168,6 +161,12 @@ fn handle_grid_key(app: &mut App, key: KeyEvent) {
         KeyCode::Backspace => draft.backspace(),
         _ => {}
     }
+}
+
+fn cycle_field(field: usize, fields: std::ops::Range<usize>, backward: bool) -> usize {
+    let step = if backward { fields.len() - 1 } else { 1 };
+    let field = field.clamp(fields.start, fields.end - 1);
+    fields.start + (field - fields.start + step) % fields.len()
 }
 
 fn handle_dialog_key(app: &mut App, key: KeyEvent) {
