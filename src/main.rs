@@ -29,7 +29,7 @@ use tmux_expose::{
 mod popup;
 
 #[derive(Debug, Parser)]
-#[command(version, about = "Mission Control-style tmux session switcher")]
+#[command(version, about = "Browse tmux sessions, windows, and panes")]
 struct Cli {
     #[arg(long, value_name = "MS", value_parser = parse_refresh) ]
     topology_refresh: Option<u64>,
@@ -108,14 +108,14 @@ impl Drop for TerminalGuard {
 
 /// One-shot side-effecting command meant to be wired straight into an
 /// agent's own hook config (e.g. Claude Code's `settings.json`) as
-/// `tmux-expose agent-status <working|waiting|attention|clear>`. Deliberately
+/// `tmux-workspace-expose agent-status <working|waiting|attention|clear>`. Deliberately
 /// not a clap subcommand: it never launches the TUI, so hook configs only
 /// need to know one binary name, and it can't collide with the picker's own
 /// flags.
 ///
 /// Records status on the calling pane (via `$TMUX_PANE`, which tmux injects
 /// into every pane's shell — and which a hook subprocess inherits, since
-/// it's a child of that same shell) so tmux-expose can read it back later.
+/// it's a child of that same shell) so tmux-workspace-expose can read it back later.
 fn run_agent_status(status: &str) -> Result<()> {
     validate_agent_status_word(status)?;
 
@@ -471,24 +471,24 @@ mod tests {
     fn cli_refresh_overrides_only_explicit_options_and_uses_settings_ranges() {
         let mut settings = Appearance::default();
         settings.0[PANE_REFRESH] = "3200".into();
-        let cli = Cli::parse_from(["tmux-expose", "--active-pane-refresh", "400"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose", "--active-pane-refresh", "400"]);
         let settings = apply_cli_appearance(settings, &cli);
         assert_eq!(settings.number(PANE_REFRESH), 3200);
         assert_eq!(settings.number(ACTIVE_REFRESH), 400);
-        assert!(Cli::try_parse_from(["tmux-expose", "--pane-refresh", "60001"]).is_err());
-        assert!(Cli::try_parse_from(["tmux-expose", "--max-captures", "33"]).is_err());
+        assert!(Cli::try_parse_from(["tmux-workspace-expose", "--pane-refresh", "60001"]).is_err());
+        assert!(Cli::try_parse_from(["tmux-workspace-expose", "--max-captures", "33"]).is_err());
     }
 
     #[test]
     fn parses_forced_columns_option() {
-        let cli = Cli::parse_from(["tmux-expose", "--columns", "2"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose", "--columns", "2"]);
 
         assert_eq!(cli.columns, Some(2));
     }
 
     #[test]
     fn color_options_default_to_none() {
-        let cli = Cli::parse_from(["tmux-expose"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose"]);
 
         assert_eq!(cli.selected_color, None);
         assert_eq!(cli.attached_color, None);
@@ -497,14 +497,14 @@ mod tests {
 
     #[test]
     fn parses_named_color() {
-        let cli = Cli::parse_from(["tmux-expose", "--selected-color", "cyan"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose", "--selected-color", "cyan"]);
 
         assert_eq!(cli.selected_color, Some(Color::Cyan));
     }
 
     #[test]
     fn parses_indexed_color() {
-        let cli = Cli::parse_from(["tmux-expose", "--attached-color", "208"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose", "--attached-color", "208"]);
 
         assert_eq!(cli.attached_color, Some(Color::Indexed(208)));
     }
@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn parses_all_color_options() {
         let cli = Cli::parse_from([
-            "tmux-expose",
+            "tmux-workspace-expose",
             "--selected-color",
             "magenta",
             "--attached-color",
@@ -528,7 +528,7 @@ mod tests {
 
     #[test]
     fn parses_hex_color() {
-        let cli = Cli::parse_from(["tmux-expose", "--selected-color", "#ff8700"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose", "--selected-color", "#ff8700"]);
 
         assert_eq!(cli.selected_color, Some(Color::Rgb(255, 135, 0)));
     }
@@ -543,7 +543,8 @@ mod tests {
 
     #[test]
     fn rejects_invalid_color() {
-        let result = Cli::try_parse_from(["tmux-expose", "--selected-color", "not-a-color"]);
+        let result =
+            Cli::try_parse_from(["tmux-workspace-expose", "--selected-color", "not-a-color"]);
 
         assert!(result.is_err());
         // `colour` prefix with a non-numeric / out-of-range suffix is still invalid.
@@ -553,21 +554,21 @@ mod tests {
 
     #[test]
     fn vim_defaults_to_off() {
-        let cli = Cli::parse_from(["tmux-expose"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose"]);
 
         assert!(!cli.vim);
     }
 
     #[test]
     fn parses_vim_flag() {
-        let cli = Cli::parse_from(["tmux-expose", "--vim"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose", "--vim"]);
 
         assert!(cli.vim);
     }
 
     #[test]
     fn agent_status_colors_default_to_none() {
-        let cli = Cli::parse_from(["tmux-expose"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose"]);
 
         assert_eq!(cli.attention_color, None);
         assert_eq!(cli.waiting_color, None);
@@ -577,7 +578,7 @@ mod tests {
     #[test]
     fn parses_agent_status_colors() {
         let cli = Cli::parse_from([
-            "tmux-expose",
+            "tmux-workspace-expose",
             "--attention-color",
             "red",
             "--waiting-color",
@@ -593,14 +594,14 @@ mod tests {
 
     #[test]
     fn agent_sort_is_on_by_default() {
-        let cli = Cli::parse_from(["tmux-expose"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose"]);
 
         assert!(!cli.no_agent_sort);
     }
 
     #[test]
     fn parses_no_agent_sort_flag() {
-        let cli = Cli::parse_from(["tmux-expose", "--no-agent-sort"]);
+        let cli = Cli::parse_from(["tmux-workspace-expose", "--no-agent-sort"]);
 
         assert!(cli.no_agent_sort);
     }

@@ -15,7 +15,7 @@ categories = ["command-line-utilities"]
 name = "tmux_expose"
 
 [[bin]]
-name = "tmux-expose"
+name = "tmux-workspace-expose"
 path = "src/main.rs"
 
 [dependencies]

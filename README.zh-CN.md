@@ -30,10 +30,10 @@
 
 ```bash
 git clone https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose.git
-cargo install --locked --force --path ./tmux-workspace-expose
+cargo install --locked --path ./tmux-workspace-expose
 ```
 
-Cargo 包名为 `tmux-workspace-expose`，安装后的命令为 `tmux-expose`。确保 tmux 服务能从 `PATH` 找到它。这里必须带 `--force`，因为该命令名与上游 `tmux-expose` crate 相同：从已有的上游安装迁移时，不带 `--force` 会报 `error: binary 'tmux-expose' already exists in destination`。
+安装后的命令为 `tmux-workspace-expose`。确保 tmux 服务能从 `PATH` 找到它。
 
 ### 使用 TPM
 
@@ -44,6 +44,10 @@ set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 ```
 
 重新加载 tmux 配置，按前缀键再按大写 `I` 安装插件，然后按 `Alt+e` 打开总览。TPM 会更新插件脚本。要同步更新二进制，请从更新后的项目目录运行 `cargo install --locked --force --path .`，然后再次加载 tmux 配置。插件脚本通过配套的二进制读取已保存的弹窗设置。
+
+### 从旧版二开插件升级
+
+安装新命令，将 `@tmux-expose-command` 和 Agent Hook 里引用的 `tmux-expose` 改为 `tmux-workspace-expose`，然后更新 TPM 插件并重新加载 tmux 配置。`~/.config/tmux-expose` 或 `$XDG_CONFIG_HOME/tmux-expose` 中的设置可以继续使用。重启正在运行的 Claude Code 会话以加载新 Hook。
 
 ### 手动加载
 
@@ -56,7 +60,7 @@ run-shell 'bash ~/src/tmux-workspace-expose/tmux.expose.tmux'
 如果 tmux 找不到二进制，在加载插件前指定实际路径。必须写完整路径：该值会被单引号包裹后传给 `run-shell`，开头的 `~` **不会**被展开，弹窗会启动失败。
 
 ```tmux
-set -g @tmux-expose-command '/home/you/.cargo/bin/tmux-expose'
+set -g @tmux-expose-command '/home/you/.cargo/bin/tmux-workspace-expose'
 ```
 
 ## 快捷键
@@ -163,14 +167,14 @@ chars = "\u001B[24;2~"
 
 | 命令 | 状态 |
 | --- | --- |
-| `tmux-expose agent-status working` | Agent 正在处理任务 |
-| `tmux-expose agent-status waiting` | 当前轮次已结束，等待你的下一条指令 |
-| `tmux-expose agent-status attention` | 正在等你确认权限或处理其他事项 |
-| `tmux-expose agent-status clear` | 清除当前 Pane 的状态 |
+| `tmux-workspace-expose agent-status working` | Agent 正在处理任务 |
+| `tmux-workspace-expose agent-status waiting` | 当前轮次已结束，等待你的下一条指令 |
+| `tmux-workspace-expose agent-status attention` | 正在等你确认权限或处理其他事项 |
+| `tmux-workspace-expose agent-status clear` | 清除当前 Pane 的状态 |
 
 例如，在一个 Pane 里标记 `waiting`，再按 `Alt+e`，对应的 Session 卡片会提示它在等待回复。
 
-总览会忽略已退出的 Pane 上的标记，以及重新启动 Pane 前写入的标记。缺少 Pane 进程信息的旧标记可以手动清理。如果 Agent 退出后 Shell 仍在运行，且退出 hook 未清除标记，在对应 Pane 中执行 `tmux-expose agent-status clear`。在 tmux 内写入失败时，命令会返回错误，便于排查目标 Pane 或 hook 配置。
+总览会忽略已退出的 Pane 上的标记，以及重新启动 Pane 前写入的标记。缺少 Pane 进程信息的旧标记可以手动清理。如果 Agent 退出后 Shell 仍在运行，且退出 hook 未清除标记，在对应 Pane 中执行 `tmux-workspace-expose agent-status clear`。在 tmux 内写入失败时，命令会返回错误，便于排查目标 Pane 或 hook 配置。
 
 ### Claude Code 设置
 
@@ -180,19 +184,19 @@ chars = "\u001B[24;2~"
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status working" }] }
+      { "hooks": [{ "type": "command", "command": "tmux-workspace-expose agent-status working" }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status waiting" }] }
+      { "hooks": [{ "type": "command", "command": "tmux-workspace-expose agent-status waiting" }] }
     ],
     "StopFailure": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }] }
+      { "hooks": [{ "type": "command", "command": "tmux-workspace-expose agent-status attention" }] }
     ],
     "PermissionRequest": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }] }
+      { "hooks": [{ "type": "command", "command": "tmux-workspace-expose agent-status attention" }] }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status clear" }] }
+      { "hooks": [{ "type": "command", "command": "tmux-workspace-expose agent-status clear" }] }
     ]
   }
 }
@@ -200,9 +204,9 @@ chars = "\u001B[24;2~"
 
 `StopFailure` 不能省略。Claude Code 在一轮回复因 API 错误结束时用 `StopFailure` 代替 `Stop`，而你手动中断时 `Stop` 也不会触发。少了这条，这类轮次结束后徽标会一直停在 `working`，因为没有事件去覆盖它。
 
-保存后，在 tmux 中重启 Claude Code 或开启一个新会话，再用 `/hooks` 核对这五个事件。确认在启动 Claude Code 的终端里能运行 `tmux-expose --version`。如果二进制用了自定义路径，把示例中的 `tmux-expose` 换成实际可执行文件的绝对路径——优先用绝对路径而不是裸命令名，因为 hook 进程未必继承你交互 shell 的 `PATH`。 [Claude Code hooks 文档](https://code.claude.com/docs/en/hooks)
+保存后，在 tmux 中重启 Claude Code 或开启一个新会话，再用 `/hooks` 核对这五个事件。确认在启动 Claude Code 的终端里能运行 `tmux-workspace-expose --version`。如果二进制用了自定义路径，把示例中的 `tmux-workspace-expose` 换成实际可执行文件的绝对路径——优先用绝对路径而不是裸命令名，因为 hook 进程未必继承你交互 shell 的 `PATH`。 [Claude Code hooks 文档](https://code.claude.com/docs/en/hooks)
 
-其他 Agent 可以通过各自的 hook、生命周期脚本或启动包装器，在对应的 tmux Pane 中运行相同的 `tmux-expose agent-status <状态>` 命令。
+其他 Agent 可以通过各自的 hook、生命周期脚本或启动包装器，在对应的 tmux Pane 中运行相同的 `tmux-workspace-expose agent-status <状态>` 命令。
 
 ## 来源与许可证
 

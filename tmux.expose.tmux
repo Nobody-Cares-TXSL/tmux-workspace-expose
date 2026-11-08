@@ -29,18 +29,19 @@ border_style="$(tmux show-option -gqv @tmux-expose-border-style)"
 agent_sort="$(tmux show-option -gqv @tmux-expose-agent-sort)"
 vim_keys="$(tmux show-option -gqv @tmux-expose-vim-keys)"
 command="$(tmux show-option -gqv @tmux-expose-command)"
-command="${command:-tmux-expose}"
+binary=tmux-workspace-expose
+command="${command:-${binary}}"
 
 helper="${TMUX_EXPOSE_POPUP_HELPER:-${command}}"
 # The popup command can be an arbitrary shell command or a user wrapper.
-if [[ -z "${TMUX_EXPOSE_POPUP_HELPER:-}" && "${helper##*/}" != tmux-expose ]]; then
-  helper=tmux-expose
+if [[ -z "${TMUX_EXPOSE_POPUP_HELPER:-}" && "${helper##*/}" != "${binary}" ]]; then
+  helper="${binary}"
 fi
 if [[ "${helper}" == '~/'* ]]; then
   helper="${HOME}/${helper:2}"
 fi
 if [[ ! -f "${helper}" || ! -x "${helper}" ]]; then
-  helper="$(type -P -- "${helper}" || type -P tmux-expose || true)"
+  helper="$(type -P -- "${helper}" || type -P "${binary}" || true)"
 fi
 if [[ -n "${helper}" ]] && spec="$("${helper}" --print-popup-spec \
     "${key}" "${key_table}" "${width}" "${height}" "${anchor}" "${style}" "${border_style}" 2>&1)"; then
@@ -59,7 +60,7 @@ else
   # TPM can source the script before the matching binary has been installed.
   # Keep the tmux defaults available on first install.
   if [[ -e "${XDG_CONFIG_HOME:-${HOME}/.config}/tmux-expose/appearance.conf" ]]; then
-    printf 'tmux.expose: could not load saved popup settings. Check the error below or install the matching binary.\n%s\n' "${spec:-}" >&2
+    printf 'tmux-workspace-expose: could not load saved popup settings. Check the error below or install the matching binary.\n%s\n' "${spec:-}" >&2
     exit 1
   fi
   if [[ -z "${key}" ]]; then
@@ -99,7 +100,7 @@ case "${anchor}" in
   left) position_args=(-x '#{popup_pane_left}') ;;
   right) position_args=(-x '#{popup_pane_right}') ;;
   *)
-    printf 'tmux.expose: invalid @tmux-expose-anchor: %s\n' "${anchor}" >&2
+    printf 'tmux-workspace-expose: invalid @tmux-expose-anchor: %s\n' "${anchor}" >&2
     exit 1
     ;;
 esac

@@ -30,10 +30,10 @@ You need Git, Bash, Cargo, and tmux. This project was tested with Alacritty and 
 
 ```bash
 git clone https://github.com/Nobody-Cares-TXSL/tmux-workspace-expose.git
-cargo install --locked --force --path ./tmux-workspace-expose
+cargo install --locked --path ./tmux-workspace-expose
 ```
 
-The Cargo package is called `tmux-workspace-expose`. It installs a `tmux-expose` command that must be on the tmux server's `PATH`. The `--force` flag is needed because that command name is the same as the upstream `tmux-expose` crate's: without it, migrating from an existing upstream install fails with `error: binary 'tmux-expose' already exists in destination`.
+The installed command is `tmux-workspace-expose`. Make it available on the tmux server's `PATH`.
 
 ### Install with TPM
 
@@ -44,6 +44,10 @@ set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 ```
 
 Reload your tmux configuration, press the prefix key followed by uppercase `I`, then press `Alt+e` to open the overview. TPM updates the plugin script. To update the binary as well, run `cargo install --locked --force --path .` from the updated checkout, then reload your tmux configuration again. The plugin script uses the matching binary to read saved popup settings.
+
+### Upgrade from an older fork install
+
+Install the renamed binary and update any `@tmux-expose-command` override and Agent hooks that still call `tmux-expose`. Then update the TPM checkout and reload tmux. Existing settings in `~/.config/tmux-expose` or `$XDG_CONFIG_HOME/tmux-expose` carry over. Restart active Claude Code sessions to pick up the updated hooks.
 
 ### Load manually
 
@@ -56,7 +60,7 @@ run-shell 'bash ~/src/tmux-workspace-expose/tmux.expose.tmux'
 If tmux cannot find the binary, set its path before loading the plugin. Write the full path: the value is passed to `run-shell` inside single quotes, so a leading `~` is **not** expanded and the popup will fail to start.
 
 ```tmux
-set -g @tmux-expose-command '/home/you/.cargo/bin/tmux-expose'
+set -g @tmux-expose-command '/home/you/.cargo/bin/tmux-workspace-expose'
 ```
 
 ## Keyboard shortcuts
@@ -163,14 +167,14 @@ Status is recorded on the tmux pane that runs the command and summarized in the 
 
 | Command | Status |
 | --- | --- |
-| `tmux-expose agent-status working` | The agent is working on a task. |
-| `tmux-expose agent-status waiting` | The turn ended and the agent is waiting for your next prompt. |
-| `tmux-expose agent-status attention` | The agent is waiting for permission or another action. |
-| `tmux-expose agent-status clear` | Clear the status on this pane. |
+| `tmux-workspace-expose agent-status working` | The agent is working on a task. |
+| `tmux-workspace-expose agent-status waiting` | The turn ended and the agent is waiting for your next prompt. |
+| `tmux-workspace-expose agent-status attention` | The agent is waiting for permission or another action. |
+| `tmux-workspace-expose agent-status clear` | Clear the status on this pane. |
 
 For example, set a pane to `waiting` and press `Alt+e`. The session card will show the waiting badge.
 
-The overview ignores marks from dead panes and marks written before a pane was respawned. Older marks without pane process information can be cleared manually. If an agent exits and leaves its shell running without clearing its mark, run `tmux-expose agent-status clear` in that pane. Inside tmux, the command reports failed writes so you can check the target pane or hook configuration.
+The overview ignores marks from dead panes and marks written before a pane was respawned. Older marks without pane process information can be cleared manually. If an agent exits and leaves its shell running without clearing its mark, run `tmux-workspace-expose agent-status clear` in that pane. Inside tmux, the command reports failed writes so you can check the target pane or hook configuration.
 
 ### Claude Code setup
 
@@ -180,19 +184,19 @@ Add this to `~/.claude/settings.json` for all projects or to a project's `.claud
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status working" }] }
+      { "hooks": [{ "type": "command", "command": "tmux-workspace-expose agent-status working" }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status waiting" }] }
+      { "hooks": [{ "type": "command", "command": "tmux-workspace-expose agent-status waiting" }] }
     ],
     "StopFailure": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }] }
+      { "hooks": [{ "type": "command", "command": "tmux-workspace-expose agent-status attention" }] }
     ],
     "PermissionRequest": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }] }
+      { "hooks": [{ "type": "command", "command": "tmux-workspace-expose agent-status attention" }] }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status clear" }] }
+      { "hooks": [{ "type": "command", "command": "tmux-workspace-expose agent-status clear" }] }
     ]
   }
 }
@@ -200,9 +204,9 @@ Add this to `~/.claude/settings.json` for all projects or to a project's `.claud
 
 `StopFailure` is not optional. Claude Code fires `StopFailure` instead of `Stop` when a turn ends with an API error, and `Stop` does not fire when you interrupt. Without it the badge stays on `working` after such a turn, because nothing overwrites it.
 
-Restart Claude Code or start a new session inside tmux, then run `/hooks` to verify the five events. Check that `tmux-expose --version` runs in the same terminal. If you installed the binary to a custom path, replace `tmux-expose` in the example with the executable's absolute path — prefer the absolute path over a bare command name, since hook processes may not inherit the `PATH` that your interactive shell has. [Claude Code hooks reference](https://code.claude.com/docs/en/hooks)
+Restart Claude Code or start a new session inside tmux, then run `/hooks` to verify the five events. Check that `tmux-workspace-expose --version` runs in the same terminal. If you installed the binary to a custom path, replace `tmux-workspace-expose` in the example with the executable's absolute path — prefer the absolute path over a bare command name, since hook processes may not inherit the `PATH` that your interactive shell has. [Claude Code hooks reference](https://code.claude.com/docs/en/hooks)
 
-For other agents, run the same `tmux-expose agent-status <status>` commands from an available hook, lifecycle script, or wrapper in the corresponding tmux pane.
+For other agents, run the same `tmux-workspace-expose agent-status <status>` commands from an available hook, lifecycle script, or wrapper in the corresponding tmux pane.
 
 ## Credits and license
 

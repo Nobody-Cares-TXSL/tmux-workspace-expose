@@ -16,7 +16,7 @@ help:
 	@printf "  make fmt-check        Check formatting\n"
 	@printf "  make clippy           Run clippy with warnings denied\n"
 	@printf "  make plugin-check     Check tmux plugin entrypoint\n"
-	@printf "  make run ARGS=...     Run tmux-expose with arguments\n"
+	@printf "  make run ARGS=...     Run tmux-workspace-expose with arguments\n"
 
 # Build debug version
 build:
@@ -27,8 +27,6 @@ build-release:
 	cargo build --release
 
 # Install to ~/.cargo/bin
-# --force: the bin name tmux-expose collides with the upstream release, so a
-# plain install fails when an older binary already occupies ~/.cargo/bin.
 install:
 	cargo install --force --path . --locked
 
