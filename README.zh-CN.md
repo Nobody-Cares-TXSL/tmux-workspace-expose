@@ -53,10 +53,10 @@ set -g @plugin 'Nobody-Cares-TXSL/tmux-workspace-expose'
 run-shell 'bash ~/src/tmux-workspace-expose/tmux.expose.tmux'
 ```
 
-如果 tmux 找不到二进制，在加载插件前指定实际路径。
+如果 tmux 找不到二进制，在加载插件前指定实际路径。必须写完整路径：该值会被单引号包裹后传给 `run-shell`，开头的 `~` **不会**被展开，弹窗会启动失败。
 
 ```tmux
-set -g @tmux-expose-command '~/.cargo/bin/tmux-expose'
+set -g @tmux-expose-command '/home/you/.cargo/bin/tmux-expose'
 ```
 
 ## 快捷键
@@ -65,7 +65,7 @@ set -g @tmux-expose-command '~/.cargo/bin/tmux-expose'
 | --- | --- |
 | `Alt+e` | 打开 Session 总览，默认再次按下关闭弹窗 |
 | `Alt+w` | 直接打开当前 Session 的 Window 总览 |
-| `Ctrl+,` / `Shift+F12` | 打开设置 |
+| `Shift+F12` | 打开设置。插件只创建这一个绑定；`Ctrl+,` 能否使用取决于终端是否把它发成 `Shift+F12` 序列（见下文） |
 | 方向键 | 移动选中项 |
 | 鼠标滚轮 | 逐行滚动 |
 | 鼠标左键 | 选中 Session 或 Window 卡片，按 `Enter` 进入或切换 |
@@ -95,6 +95,8 @@ key = ","
 mods = "Control"
 chars = "\u001B[24;2~"
 ```
+
+这段配置让 Alacritty 在你按 `Ctrl+,` 时发出 `Shift+F12` 的转义序列，tmux 根本收不到逗号键。其他终端需要把 `Ctrl+,` 映射到各自发送 `Shift+F12` 的序列，否则按下没有反应。
 
 ## 设置项与取值
 
@@ -183,29 +185,22 @@ chars = "\u001B[24;2~"
     "Stop": [
       { "hooks": [{ "type": "command", "command": "tmux-expose agent-status waiting" }] }
     ],
-    "PostToolUse": [
-      {
-        "matcher": "",
-        "hooks": [{ "type": "command", "command": "tmux-expose agent-status working" }]
-      }
+    "StopFailure": [
+      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }] }
     ],
-    "Notification": [
-      {
-        "matcher": "permission_prompt",
-        "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }]
-      }
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }] }
     ],
     "SessionEnd": [
-      {
-        "matcher": "",
-        "hooks": [{ "type": "command", "command": "tmux-expose agent-status clear" }]
-      }
+      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status clear" }] }
     ]
   }
 }
 ```
 
-保存后，在 tmux 中重启 Claude Code 或开启一个新会话，再用 `/hooks` 核对这五个事件。确认在启动 Claude Code 的终端里能运行 `tmux-expose --version`。如果二进制用了自定义路径，把示例中的 `tmux-expose` 换成实际可执行文件的绝对路径。 [Claude Code hooks 文档](https://code.claude.com/docs/en/hooks)
+`StopFailure` 不能省略。Claude Code 在一轮回复因 API 错误结束时用 `StopFailure` 代替 `Stop`，而你手动中断时 `Stop` 也不会触发。少了这条，这类轮次结束后徽标会一直停在 `working`，因为没有事件去覆盖它。
+
+保存后，在 tmux 中重启 Claude Code 或开启一个新会话，再用 `/hooks` 核对这五个事件。确认在启动 Claude Code 的终端里能运行 `tmux-expose --version`。如果二进制用了自定义路径，把示例中的 `tmux-expose` 换成实际可执行文件的绝对路径——优先用绝对路径而不是裸命令名，因为 hook 进程未必继承你交互 shell 的 `PATH`。 [Claude Code hooks 文档](https://code.claude.com/docs/en/hooks)
 
 其他 Agent 可以通过各自的 hook、生命周期脚本或启动包装器，在对应的 tmux Pane 中运行相同的 `tmux-expose agent-status <状态>` 命令。
 

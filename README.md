@@ -53,10 +53,10 @@ Add this line to your tmux configuration and substitute your checkout path.
 run-shell 'bash ~/src/tmux-workspace-expose/tmux.expose.tmux'
 ```
 
-If tmux cannot find the binary, set its path before loading the plugin.
+If tmux cannot find the binary, set its path before loading the plugin. Write the full path: the value is passed to `run-shell` inside single quotes, so a leading `~` is **not** expanded and the popup will fail to start.
 
 ```tmux
-set -g @tmux-expose-command '~/.cargo/bin/tmux-expose'
+set -g @tmux-expose-command '/home/you/.cargo/bin/tmux-expose'
 ```
 
 ## Keyboard shortcuts
@@ -65,7 +65,7 @@ set -g @tmux-expose-command '~/.cargo/bin/tmux-expose'
 | --- | --- |
 | `Alt+e` | Open the session overview. Press again to close the popup with the default binding. |
 | `Alt+w` | Open the window overview for the current session. |
-| `Ctrl+,` / `Shift+F12` | Open settings. |
+| `Shift+F12` | Open settings. This is the only binding the plugin creates; `Ctrl+,` works only if your terminal sends the `Shift+F12` sequence for it (see below). |
 | Arrow keys | Move the selection. |
 | Mouse wheel | Scroll by row. |
 | Left click | Select a session or window card. Press `Enter` to open or switch to it. |
@@ -95,6 +95,8 @@ key = ","
 mods = "Control"
 chars = "\u001B[24;2~"
 ```
+
+This binding makes Alacritty emit the `Shift+F12` escape sequence when you press `Ctrl+,`; tmux never sees a comma key. Other terminals need an equivalent mapping to whatever sequence they send for `Shift+F12` — without one, `Ctrl+,` does nothing.
 
 ## Settings
 
@@ -183,29 +185,22 @@ Add this to `~/.claude/settings.json` for all projects or to a project's `.claud
     "Stop": [
       { "hooks": [{ "type": "command", "command": "tmux-expose agent-status waiting" }] }
     ],
-    "PostToolUse": [
-      {
-        "matcher": "",
-        "hooks": [{ "type": "command", "command": "tmux-expose agent-status working" }]
-      }
+    "StopFailure": [
+      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }] }
     ],
-    "Notification": [
-      {
-        "matcher": "permission_prompt",
-        "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }]
-      }
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status attention" }] }
     ],
     "SessionEnd": [
-      {
-        "matcher": "",
-        "hooks": [{ "type": "command", "command": "tmux-expose agent-status clear" }]
-      }
+      { "hooks": [{ "type": "command", "command": "tmux-expose agent-status clear" }] }
     ]
   }
 }
 ```
 
-Restart Claude Code or start a new session inside tmux, then run `/hooks` to verify the five events. Check that `tmux-expose --version` runs in the same terminal. If you installed the binary to a custom path, replace `tmux-expose` in the example with the executable's absolute path. [Claude Code hooks reference](https://code.claude.com/docs/en/hooks)
+`StopFailure` is not optional. Claude Code fires `StopFailure` instead of `Stop` when a turn ends with an API error, and `Stop` does not fire when you interrupt. Without it the badge stays on `working` after such a turn, because nothing overwrites it.
+
+Restart Claude Code or start a new session inside tmux, then run `/hooks` to verify the five events. Check that `tmux-expose --version` runs in the same terminal. If you installed the binary to a custom path, replace `tmux-expose` in the example with the executable's absolute path — prefer the absolute path over a bare command name, since hook processes may not inherit the `PATH` that your interactive shell has. [Claude Code hooks reference](https://code.claude.com/docs/en/hooks)
 
 For other agents, run the same `tmux-expose agent-status <status>` commands from an available hook, lifecycle script, or wrapper in the corresponding tmux pane.
 
