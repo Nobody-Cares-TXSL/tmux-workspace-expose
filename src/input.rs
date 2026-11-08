@@ -252,18 +252,18 @@ fn handle_detail_key(app: &mut App, key: KeyEvent, columns: usize) {
         (KeyCode::BackTab, _)
         | (KeyCode::Tab, KeyModifiers::SHIFT)
         | (KeyCode::Left, KeyModifiers::NONE) => app.cycle_window(true),
-        (KeyCode::Char('l' | 'j'), KeyModifiers::NONE) if app.vim_keys => app.cycle_window(false),
-        (KeyCode::Char('h' | 'k'), KeyModifiers::NONE) if app.vim_keys => app.cycle_window(true),
+        (KeyCode::Char('l' | 'j'), KeyModifiers::NONE) if app.vim_keys() => app.cycle_window(false),
+        (KeyCode::Char('h' | 'k'), KeyModifiers::NONE) if app.vim_keys() => app.cycle_window(true),
         _ => {}
     }
 }
 
 fn handle_navigation_key(app: &mut App, key: KeyEvent, columns: usize) {
     let code = match (key.code, key.modifiers) {
-        (KeyCode::Char('h'), KeyModifiers::NONE) if app.vim_keys => KeyCode::Left,
-        (KeyCode::Char('j'), KeyModifiers::NONE) if app.vim_keys => KeyCode::Down,
-        (KeyCode::Char('k'), KeyModifiers::NONE) if app.vim_keys => KeyCode::Up,
-        (KeyCode::Char('l'), KeyModifiers::NONE) if app.vim_keys => KeyCode::Right,
+        (KeyCode::Char('h'), KeyModifiers::NONE) if app.vim_keys() => KeyCode::Left,
+        (KeyCode::Char('j'), KeyModifiers::NONE) if app.vim_keys() => KeyCode::Down,
+        (KeyCode::Char('k'), KeyModifiers::NONE) if app.vim_keys() => KeyCode::Up,
+        (KeyCode::Char('l'), KeyModifiers::NONE) if app.vim_keys() => KeyCode::Right,
         (code, _) => code,
     };
     match code {
@@ -374,10 +374,10 @@ fn handle_search_key(app: &mut App, key: KeyEvent, columns: usize) {
         // Vim mode: Esc on an empty query cancels (nothing to keep); Esc on
         // a typed query commits it as a filter and drops into NORMAL mode —
         // hjkl then browses the filtered results instead of typing into it.
-        (KeyCode::Esc, _) if app.vim_keys && app.search_text().is_some_and(str::is_empty) => {
+        (KeyCode::Esc, _) if app.vim_keys() && app.search_text().is_some_and(str::is_empty) => {
             app.clear_search();
         }
-        (KeyCode::Esc, _) if app.vim_keys => app.stop_editing_search(),
+        (KeyCode::Esc, _) if app.vim_keys() => app.stop_editing_search(),
         (KeyCode::Esc, _) => app.clear_search(),
         (KeyCode::Backspace, _) => app.pop_search_char(),
         (KeyCode::Char('w'), KeyModifiers::CONTROL) => app.pop_search_word(),
@@ -573,8 +573,21 @@ mod tests {
 
     fn vim_app(names: &[&str]) -> App {
         let mut app = App::new(names.iter().map(|name| session(name)).collect(), None);
-        app.vim_keys = true;
+        app.appearance.0[crate::appearance::VIM_KEYS] = "on".into();
         app
+    }
+
+    #[test]
+    fn navigation_follows_the_current_appearance() {
+        let mut app = App::new(vec![session("one"), session("two")], None);
+        app.appearance.0[crate::appearance::VIM_KEYS] = "on".into();
+
+        handle_key(&mut app, key(KeyCode::Char('l')), 2);
+        assert_eq!(app.selected_index, 1);
+
+        app.appearance.0[crate::appearance::VIM_KEYS] = "off".into();
+        handle_key(&mut app, key(KeyCode::Char('h')), 2);
+        assert_eq!(app.selected_index, 1);
     }
 
     #[test]

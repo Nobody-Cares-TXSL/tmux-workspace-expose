@@ -1,4 +1,4 @@
-use crate::appearance::{Appearance, AppearanceEdit, Language, Page};
+use crate::appearance::{Appearance, AppearanceEdit, Language, Page, VIM_KEYS};
 use crate::grid::{Settings, SettingsEdit};
 
 /// A Claude Code (or other agent) pane's status, as written by an external
@@ -119,8 +119,6 @@ pub struct App {
     pub should_quit: bool,
     pub should_switch: bool,
     pub error: Option<String>,
-    /// When true, the picker uses modal vim navigation (hjkl to move, `/` to search).
-    pub vim_keys: bool,
     pub focus: Focus,
     pub dialog: Option<WorkspaceDialog>,
     pub confirmed_action: Option<WorkspaceDialog>,
@@ -158,7 +156,6 @@ impl App {
             should_quit: false,
             should_switch: false,
             error: None,
-            vim_keys: false,
             focus: Focus::Overview,
             dialog: None,
             confirmed_action: None,
@@ -477,6 +474,10 @@ impl App {
 
     pub fn search_text(&self) -> Option<&str> {
         self.search_query.as_deref()
+    }
+
+    pub fn vim_keys(&self) -> bool {
+        self.appearance.0[VIM_KEYS] == "on"
     }
 
     pub fn language(&self) -> Language {

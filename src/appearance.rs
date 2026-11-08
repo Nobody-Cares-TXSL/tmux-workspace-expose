@@ -134,6 +134,20 @@ pub const FIELDS: [Field; 20] = [
     },
 ];
 
+pub const LAUNCH_KEY: usize = 0;
+pub const KEY_TABLE: usize = 1;
+pub const POPUP_WIDTH: usize = 2;
+pub const POPUP_HEIGHT: usize = 3;
+pub const POPUP_ANCHOR: usize = 4;
+pub const POPUP_BACKGROUND: usize = 5;
+pub const POPUP_BORDER: usize = 6;
+pub const VIM_KEYS: usize = 7;
+pub const SELECTED_COLOR: usize = 8;
+pub const ATTACHED_COLOR: usize = 9;
+pub const INACTIVE_COLOR: usize = 10;
+pub const ATTENTION_COLOR: usize = 11;
+pub const WAITING_COLOR: usize = 12;
+pub const WORKING_COLOR: usize = 13;
 pub const LANGUAGE: usize = 14;
 pub const AGENT_SORT: usize = 15;
 pub const TOPOLOGY_REFRESH: usize = 16;
@@ -205,8 +219,8 @@ impl Appearance {
             .enumerate()
             .map(|(index, field)| {
                 let name = match index {
-                    5 => "style",
-                    6 => "border-style",
+                    POPUP_BACKGROUND => "style",
+                    POPUP_BORDER => "border-style",
                     _ => field.option,
                 };
                 format!("#{{@tmux-expose-{name}}}")
@@ -229,14 +243,18 @@ impl Appearance {
                 continue;
             }
             let value = match index {
-                5 | 6 => {
-                    let prefix = if index == 5 { "bg=" } else { "fg=" };
+                POPUP_BACKGROUND | POPUP_BORDER => {
+                    let prefix = if index == POPUP_BACKGROUND {
+                        "bg="
+                    } else {
+                        "fg="
+                    };
                     value
                         .split(',')
                         .find_map(|part| part.strip_prefix(prefix))
                         .unwrap_or("default")
                 }
-                7 => {
+                VIM_KEYS => {
                     if matches!(value, "on" | "true" | "1" | "yes") {
                         "on"
                     } else {
@@ -248,9 +266,9 @@ impl Appearance {
             appearance.0[index] = value.to_owned();
         }
         if parts.clone().next().is_some_and(|key| !key.is_empty())
-            && parts.clone().nth(1) == Some("")
+            && parts.clone().nth(KEY_TABLE) == Some("")
         {
-            appearance.0[1] = "prefix".into();
+            appearance.0[KEY_TABLE] = "prefix".into();
         }
         appearance
     }
@@ -278,8 +296,8 @@ impl Appearance {
 
     fn validate_in(&self, lang: Language) -> Result<()> {
         let values = &self.0;
-        let key = &values[0];
-        let table = &values[1];
+        let key = &values[LAUNCH_KEY];
+        let table = &values[KEY_TABLE];
         let modified = key.strip_prefix("M-").or_else(|| key.strip_prefix("C-"));
         let letter = |value: &str| value.len() == 1 && value.as_bytes()[0].is_ascii_alphabetic();
         if !matches!(table.as_str(), "root" | "prefix")
@@ -294,7 +312,7 @@ impl Appearance {
                 )
             );
         }
-        for value in &values[2..4] {
+        for value in &values[POPUP_WIDTH..=POPUP_HEIGHT] {
             let (digits, max) = value
                 .strip_suffix('%')
                 .map_or((value.as_str(), 1000), |v| (v, 100));
@@ -308,7 +326,7 @@ impl Appearance {
                 );
             }
         }
-        if !ANCHORS.contains(&values[4].as_str()) {
+        if !ANCHORS.contains(&values[POPUP_ANCHOR].as_str()) {
             bail!(
                 "{}",
                 lang.text(
@@ -317,7 +335,7 @@ impl Appearance {
                 )
             );
         }
-        if !matches!(values[7].as_str(), "on" | "off") {
+        if !matches!(values[VIM_KEYS].as_str(), "on" | "off") {
             bail!(
                 "{}",
                 lang.text("Vim 导航用 on 或 off", "Vim navigation must be on or off.")
@@ -353,12 +371,12 @@ impl Appearance {
                 );
             }
         }
-        for index in [5, 6, 8, 9, 10, 11, 12, 13] {
+        for index in (POPUP_BACKGROUND..=POPUP_BORDER).chain(SELECTED_COLOR..=WORKING_COLOR) {
             let value = &values[index];
             if !value
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || c == b'#')
-                || (parse_color(value).is_err() && !(index <= 6 && value == "default"))
+                || (parse_color(value).is_err() && !(index <= POPUP_BORDER && value == "default"))
             {
                 let field = FIELDS[index];
                 bail!(
@@ -379,15 +397,15 @@ impl Appearance {
         self.validate_in(lang)?;
         let path = Self::path()?;
         let prior = fs::read(&path).ok();
-        let plugin = if self.0[..7] != previous.0[..7] {
+        let plugin = if self.0[..VIM_KEYS] != previous.0[..VIM_KEYS] {
             env::var_os("TMUX_EXPOSE_PLUGIN_PATH")
         } else {
             None
         };
-        let changed_key = self.0[..2] != previous.0[..2];
+        let changed_key = self.0[..=KEY_TABLE] != previous.0[..=KEY_TABLE];
         if changed_key
             && plugin.is_some()
-            && binding(&self.0[1], &self.0[0])?.is_some_and(|line| !ours(&line))
+            && binding(&self.0[KEY_TABLE], &self.0[LAUNCH_KEY])?.is_some_and(|line| !ours(&line))
         {
             bail!(
                 "{}",
@@ -405,7 +423,7 @@ impl Appearance {
             .zip(&self.0)
             .enumerate()
             .map(|(index, (field, value))| {
-                let value = if index == 5 || index == 6 {
+                let value = if matches!(index, POPUP_BACKGROUND | POPUP_BORDER) {
                     popup_color(value)
                 } else {
                     value.clone()
@@ -431,7 +449,8 @@ impl Appearance {
                 );
             }
             if changed_key
-                && binding(&previous.0[1], &previous.0[0])?.is_some_and(|line| ours(&line))
+                && binding(&previous.0[KEY_TABLE], &previous.0[LAUNCH_KEY])?
+                    .is_some_and(|line| ours(&line))
             {
                 let output = Command::new("tmux")
                     .args(["unbind-key", "-T", &previous.0[1], &previous.0[0]])
@@ -499,8 +518,8 @@ impl Page {
     pub fn fields(self) -> std::ops::Range<usize> {
         match self {
             Self::Grid => 0..crate::grid::FIELD_NAMES.len(),
-            Self::Popup => 0..8,
-            Self::Colors => 8..14,
+            Self::Popup => LAUNCH_KEY..SELECTED_COLOR,
+            Self::Colors => SELECTED_COLOR..LANGUAGE,
             Self::Behavior => LANGUAGE..FIELDS.len(),
         }
     }
@@ -563,7 +582,7 @@ impl AppearanceEdit {
     }
     pub fn adjust(&mut self, forward: bool) {
         let value = &mut self.draft.0[self.field];
-        if self.field == 2 || self.field == 3 {
+        if matches!(self.field, POPUP_WIDTH | POPUP_HEIGHT) {
             let old = value.trim_end_matches('%').parse::<i32>().unwrap_or(100);
             *value = format!("{}%", (old + if forward { 5 } else { -5 }).clamp(1, 100));
         } else if let Some(range) = number_range(self.field) {
@@ -577,17 +596,17 @@ impl AppearanceEdit {
             *value = next.clamp(*range.start(), *range.end()).to_string();
         } else {
             let options: &[&str] = match self.field {
-                0 => &["M-e", "M-s", "M-o"],
-                1 => &["root", "prefix"],
-                4 => &ANCHORS,
-                7 | AGENT_SORT => &["off", "on"],
+                LAUNCH_KEY => &["M-e", "M-s", "M-o"],
+                KEY_TABLE => &["root", "prefix"],
+                POPUP_ANCHOR => &ANCHORS,
+                VIM_KEYS | AGENT_SORT => &["off", "on"],
                 LANGUAGE => &["zh", "en"],
                 _ => &[
                     "default", "black", "white", "cyan", "green", "yellow", "magenta", "red",
                     "blue", "gray",
                 ],
             };
-            let options = if (8..LANGUAGE).contains(&self.field) {
+            let options = if (SELECTED_COLOR..LANGUAGE).contains(&self.field) {
                 &options[1..]
             } else {
                 options
@@ -670,16 +689,16 @@ mod tests {
     #[test]
     fn accepts_and_rejects_popup_edits_before_binding() {
         let mut appearance = Appearance::default();
-        appearance.0[0] = "M-z".into();
-        appearance.0[2] = "85%".into();
-        appearance.0[4] = "bottom".into();
-        appearance.0[5] = "LightBlue".into();
+        appearance.0[LAUNCH_KEY] = "M-z".into();
+        appearance.0[POPUP_WIDTH] = "85%".into();
+        appearance.0[POPUP_ANCHOR] = "bottom".into();
+        appearance.0[POPUP_BACKGROUND] = "LightBlue".into();
         assert!(appearance.validate().is_ok());
-        assert_eq!(popup_color(&appearance.0[5]), "colour12");
-        appearance.0[2] = "101%".into();
+        assert_eq!(popup_color(&appearance.0[POPUP_BACKGROUND]), "colour12");
+        appearance.0[POPUP_WIDTH] = "101%".into();
         assert!(appearance.validate().is_err());
-        appearance.0[2] = "100%".into();
-        appearance.0[0] = "M-w".into();
+        appearance.0[POPUP_WIDTH] = "100%".into();
+        appearance.0[LAUNCH_KEY] = "M-w".into();
         assert!(appearance.validate().is_err());
     }
 }

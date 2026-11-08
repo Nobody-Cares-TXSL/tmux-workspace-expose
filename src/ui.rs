@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::{
-    appearance::{FIELDS, LANGUAGE, Language, Page, parse_color},
+    appearance::{FIELDS, LANGUAGE, Language, POPUP_BACKGROUND, POPUP_BORDER, Page, parse_color},
     grid::{FIELD_NAMES, Limits, Settings, Viewport},
     model::{AgentStatus, App, Focus, PanePreview, Session, WindowPreview, WorkspaceDialog},
     preview::PreviewCache,
@@ -258,7 +258,7 @@ fn render_settings(frame: &mut Frame<'_>, app: &App, area: Rect, selected_color:
                 value
             };
             let mut spans = vec![Span::raw(settings_value(cursor, label, shown, 31))];
-            if (page == Page::Colors || index == 5 || index == 6)
+            if (page == Page::Colors || matches!(index, POPUP_BACKGROUND | POPUP_BORDER))
                 && let Ok(color) = parse_color(value)
             {
                 spans.push(Span::styled("  ■", Style::default().fg(color)));
@@ -451,7 +451,7 @@ fn workspace_footer(app: &App, area: Rect, columns: Option<usize>) -> Line<'stat
                 (lang.text("退出", "Quit"), "q"),
                 (
                     lang.text("选择", "Select"),
-                    if app.vim_keys {
+                    if app.vim_keys() {
                         lang.text("hjkl / Tab / 滚轮", "hjkl / Tab / wheel")
                     } else {
                         lang.text("方向键 / Tab / 滚轮", "arrows / Tab / wheel")
@@ -475,7 +475,7 @@ fn workspace_footer(app: &App, area: Rect, columns: Option<usize>) -> Line<'stat
             &[
                 (lang.text("打开", "Open"), "Enter"),
                 (
-                    if app.vim_keys {
+                    if app.vim_keys() {
                         lang.text("完成编辑", "Done")
                     } else {
                         lang.text("清除", "Clear")
@@ -495,7 +495,7 @@ fn workspace_footer(app: &App, area: Rect, columns: Option<usize>) -> Line<'stat
             (lang.text("退出", "Quit"), "q"),
             (
                 lang.text("选择", "Select"),
-                if app.vim_keys {
+                if app.vim_keys() {
                     lang.text("hjkl / 滚轮", "hjkl / wheel")
                 } else {
                     lang.text("方向键 / 滚轮", "arrows / wheel")

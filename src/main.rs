@@ -15,8 +15,9 @@ use ratatui::style::Color;
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use tmux_expose::{
     appearance::{
-        ACTIVE_REFRESH, AGENT_SORT, Appearance, MAX_CAPTURES, PANE_REFRESH, TOPOLOGY_REFRESH,
-        parse_color,
+        ACTIVE_REFRESH, AGENT_SORT, ATTACHED_COLOR, ATTENTION_COLOR, Appearance, INACTIVE_COLOR,
+        MAX_CAPTURES, PANE_REFRESH, SELECTED_COLOR, TOPOLOGY_REFRESH, VIM_KEYS, WAITING_COLOR,
+        WORKING_COLOR, parse_color,
     },
     grid::Settings,
     input,
@@ -181,7 +182,6 @@ fn main() -> Result<()> {
     };
     app.appearance = appearance;
     app.grid_error = config_error;
-    app.vim_keys = app.appearance.0[7] == "on";
     match Settings::load() {
         Ok(settings) => app.grid = settings,
         Err(error) => app.grid_error = Some(error.to_string()),
@@ -326,7 +326,7 @@ fn main() -> Result<()> {
 fn configured_appearance(cli: &Cli) -> Appearance {
     let mut appearance = Appearance::from_tmux();
     if cli.vim {
-        appearance.0[7] = "on".into();
+        appearance.0[VIM_KEYS] = "on".into();
     }
     if cli.no_agent_sort {
         appearance.0[AGENT_SORT] = "off".into();
@@ -347,7 +347,7 @@ fn configured_appearance(cli: &Cli) -> Appearance {
     .enumerate()
     {
         if let Some(color) = color {
-            appearance.0[8 + index] = color.to_string();
+            appearance.0[SELECTED_COLOR + index] = color.to_string();
         }
     }
     appearance
@@ -357,12 +357,12 @@ fn appearance_colors(appearance: &Appearance) -> ui::CardColors {
     let defaults = ui::CardColors::default();
     let color = |index: usize, fallback| parse_color(&appearance.0[index]).unwrap_or(fallback);
     ui::CardColors {
-        selected: color(8, defaults.selected),
-        attached: color(9, defaults.attached),
-        inactive: color(10, defaults.inactive),
-        attention: color(11, defaults.attention),
-        waiting: color(12, defaults.waiting),
-        working: color(13, defaults.working),
+        selected: color(SELECTED_COLOR, defaults.selected),
+        attached: color(ATTACHED_COLOR, defaults.attached),
+        inactive: color(INACTIVE_COLOR, defaults.inactive),
+        attention: color(ATTENTION_COLOR, defaults.attention),
+        waiting: color(WAITING_COLOR, defaults.waiting),
+        working: color(WORKING_COLOR, defaults.working),
     }
 }
 
@@ -397,7 +397,6 @@ fn save_settings(app: &mut App) -> Result<()> {
     }
     app.grid = grid;
     app.appearance = appearance.clone();
-    app.vim_keys = app.appearance.0[7] == "on";
     app.close_settings();
     Ok(())
 }
