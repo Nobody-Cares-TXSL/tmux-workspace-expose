@@ -44,6 +44,7 @@ if [[ "$1" == bind-key && "${5:-}" == run-shell && "${6:-}" == -b ]]; then
   fi
   # Exercise the shell boundary and check that the popup receives a client,
   # session and pane after tmux expands the keypress context.
+  [[ "$7" == "TMUX_EXPOSE_BINDING=overview "* ]]
   printf '%q ' "${@:1:4}" >>"${TMUX_EXPOSE_TEST_OUTPUT}"
   expanded="${7//'#{q:client_name}'/"'/dev/pts/test client'"}"
   expanded="${expanded//'#{q:session_id}'/"'\$5'"}"

@@ -144,7 +144,7 @@ popup_args() {
   printf '%s' "${args}"
 }
 popup_arguments="$(popup_args -w "${width}" -h "${height}" "${position_args[@]}")"
-tmux bind-key -T "${key_table}" "${key}" run-shell -b "${launcher} 0 ${popup_arguments}"
+tmux bind-key -T "${key_table}" "${key}" run-shell -b "TMUX_EXPOSE_BINDING=overview ${launcher} 0 ${popup_arguments}"
 # Shift-F12 is the terminal encoding used for Ctrl+, on tmux 3.4.
 settings_arguments="$(popup_args -w 100% -h 100%)"
 tmux bind-key -T root S-F12 run-shell -b "${launcher} 1 ${settings_arguments}"

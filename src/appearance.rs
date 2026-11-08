@@ -485,6 +485,17 @@ fn binding(table: &str, key: &str) -> io::Result<Option<String>> {
 }
 
 fn ours(line: &str) -> bool {
+    if line
+        .split_once(" run-shell -b ")
+        .is_some_and(|(_, command)| {
+            command
+                .trim_start_matches('"')
+                .starts_with("TMUX_EXPOSE_BINDING=overview ")
+        })
+    {
+        return true;
+    }
+    // Recognize bindings installed before the ownership marker was added.
     line.contains("tmux.expose.tmux") && line.contains("--popup #{q:client_name} 0 ")
 }
 
@@ -668,6 +679,22 @@ fn popup_color(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognizes_current_and_legacy_overview_bindings_only() {
+        assert!(ours(
+            r#"bind-key -T root M-e run-shell -b "TMUX_EXPOSE_BINDING=overview bash new-launcher --new-order""#
+        ));
+        assert!(ours(
+            r#"bind-key -T root M-e run-shell -b "bash '/old/tmux.expose.tmux' --popup #{q:client_name} 0 -E tmux-expose""#
+        ));
+        assert!(!ours(
+            r#"bind-key -T root M-w run-shell -b "bash '/old/tmux.expose.tmux' --popup #{q:client_name} 2 -E tmux-expose""#
+        ));
+        assert!(!ours(
+            r#"bind-key -T root M-e run-shell -b "echo TMUX_EXPOSE_BINDING=overview other-command""#
+        ));
+    }
 
     #[test]
     fn behavior_values_are_validated_and_language_can_be_changed_with_arrows() {
