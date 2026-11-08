@@ -178,6 +178,22 @@ fn number_range(field: usize) -> Option<std::ops::RangeInclusive<u64>> {
     }
 }
 
+pub fn parse_number(index: usize, value: &str) -> Result<u64, String> {
+    let range = number_range(index).ok_or_else(|| "expected a numeric setting".to_owned())?;
+    value
+        .parse()
+        .ok()
+        .filter(|number| range.contains(number))
+        .ok_or_else(|| {
+            format!(
+                "{} must be in {}–{}",
+                FIELDS[index].option,
+                range.start(),
+                range.end()
+            )
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Appearance(pub [String; FIELDS.len()]);
 
@@ -282,7 +298,7 @@ impl Appearance {
     }
 
     pub fn number(&self, index: usize) -> u64 {
-        self.0[index].parse().unwrap_or_else(|_| {
+        parse_number(index, &self.0[index]).unwrap_or_else(|_| {
             FIELDS[index]
                 .default
                 .parse()
@@ -358,10 +374,7 @@ impl Appearance {
         }
         for index in TOPOLOGY_REFRESH..=MAX_CAPTURES {
             let range = number_range(index).expect("numeric settings range");
-            if !values[index]
-                .parse::<u64>()
-                .is_ok_and(|n| range.contains(&n))
-            {
+            if parse_number(index, &values[index]).is_err() {
                 let field = FIELDS[index];
                 bail!(
                     "{}: {}–{}",

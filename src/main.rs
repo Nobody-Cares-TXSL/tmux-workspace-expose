@@ -17,7 +17,7 @@ use tmux_expose::{
     appearance::{
         ACTIVE_REFRESH, AGENT_SORT, ATTACHED_COLOR, ATTENTION_COLOR, Appearance, INACTIVE_COLOR,
         MAX_CAPTURES, PANE_REFRESH, SELECTED_COLOR, TOPOLOGY_REFRESH, VIM_KEYS, WAITING_COLOR,
-        WORKING_COLOR, parse_color,
+        WORKING_COLOR, parse_color, parse_number,
     },
     grid::Settings,
     input,
@@ -31,17 +31,17 @@ mod popup;
 #[derive(Debug, Parser)]
 #[command(version, about = "Mission Control-style tmux session switcher")]
 struct Cli {
-    #[arg(long, default_value_t = 1500, value_name = "MS", value_parser = clap::value_parser!(u64).range(1..))]
-    topology_refresh: u64,
+    #[arg(long, value_name = "MS", value_parser = parse_refresh) ]
+    topology_refresh: Option<u64>,
 
-    #[arg(long, default_value_t = 1500, value_name = "MS", value_parser = clap::value_parser!(u64).range(1..))]
-    pane_refresh: u64,
+    #[arg(long, value_name = "MS", value_parser = parse_refresh) ]
+    pane_refresh: Option<u64>,
 
-    #[arg(long, default_value_t = 300, value_name = "MS", value_parser = clap::value_parser!(u64).range(1..))]
-    active_pane_refresh: u64,
+    #[arg(long, value_name = "MS", value_parser = parse_refresh)]
+    active_pane_refresh: Option<u64>,
 
-    #[arg(long, default_value_t = 4, value_name = "N", value_parser = clap::value_parser!(u16).range(1..=32))]
-    max_captures: u16,
+    #[arg(long, value_name = "N", value_parser = parse_captures)]
+    max_captures: Option<u64>,
 
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(1..))]
     columns: Option<u16>,
@@ -72,6 +72,14 @@ struct Cli {
     /// waiting agent to the top.
     #[arg(long)]
     no_agent_sort: bool,
+}
+
+fn parse_refresh(value: &str) -> Result<u64, String> {
+    parse_number(TOPOLOGY_REFRESH, value)
+}
+
+fn parse_captures(value: &str) -> Result<u64, String> {
+    parse_number(MAX_CAPTURES, value)
 }
 
 struct TerminalGuard;
@@ -297,12 +305,7 @@ fn main() -> Result<()> {
                 &visible,
                 selected.map(|session| session.id.as_str()),
                 active_pane.map(|pane| pane.id.as_str()),
-                RefreshPolicy {
-                    selected_pane: Duration::from_millis(app.appearance.number(ACTIVE_REFRESH)),
-                    background: Duration::from_millis(app.appearance.number(PANE_REFRESH)),
-                    max_captures: app.appearance.number(MAX_CAPTURES) as usize,
-                    ..RefreshPolicy::default()
-                },
+                RefreshPolicy::from_appearance(&app.appearance),
             );
         }
     }
@@ -326,17 +329,26 @@ fn order_sessions(
 }
 
 fn configured_appearance(cli: &Cli) -> Appearance {
-    let mut appearance = Appearance::from_tmux();
+    apply_cli_appearance(Appearance::from_tmux(), cli)
+}
+
+fn apply_cli_appearance(mut appearance: Appearance, cli: &Cli) -> Appearance {
     if cli.vim {
         appearance.0[VIM_KEYS] = "on".into();
     }
     if cli.no_agent_sort {
         appearance.0[AGENT_SORT] = "off".into();
     }
-    appearance.0[TOPOLOGY_REFRESH] = cli.topology_refresh.to_string();
-    appearance.0[PANE_REFRESH] = cli.pane_refresh.to_string();
-    appearance.0[ACTIVE_REFRESH] = cli.active_pane_refresh.to_string();
-    appearance.0[MAX_CAPTURES] = cli.max_captures.to_string();
+    for (field, value) in [
+        (TOPOLOGY_REFRESH, cli.topology_refresh),
+        (PANE_REFRESH, cli.pane_refresh),
+        (ACTIVE_REFRESH, cli.active_pane_refresh),
+        (MAX_CAPTURES, cli.max_captures),
+    ] {
+        if let Some(value) = value {
+            appearance.0[field] = value.to_string();
+        }
+    }
     for (index, color) in [
         cli.selected_color,
         cli.attached_color,
@@ -424,6 +436,18 @@ mod tests {
     use clap::Parser;
 
     use super::*;
+
+    #[test]
+    fn cli_refresh_overrides_only_explicit_options_and_uses_settings_ranges() {
+        let mut settings = Appearance::default();
+        settings.0[PANE_REFRESH] = "3200".into();
+        let cli = Cli::parse_from(["tmux-expose", "--active-pane-refresh", "400"]);
+        let settings = apply_cli_appearance(settings, &cli);
+        assert_eq!(settings.number(PANE_REFRESH), 3200);
+        assert_eq!(settings.number(ACTIVE_REFRESH), 400);
+        assert!(Cli::try_parse_from(["tmux-expose", "--pane-refresh", "60001"]).is_err());
+        assert!(Cli::try_parse_from(["tmux-expose", "--max-captures", "33"]).is_err());
+    }
 
     #[test]
     fn parses_forced_columns_option() {

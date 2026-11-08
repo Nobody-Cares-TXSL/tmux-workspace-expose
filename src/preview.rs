@@ -10,7 +10,11 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use crate::{model::Session, tmux::capture_pane_preview};
+use crate::{
+    appearance::{ACTIVE_REFRESH, Appearance, MAX_CAPTURES, PANE_REFRESH},
+    model::Session,
+    tmux::capture_pane_preview,
+};
 
 #[derive(Clone, Copy)]
 pub struct RefreshPolicy {
@@ -22,11 +26,17 @@ pub struct RefreshPolicy {
 
 impl Default for RefreshPolicy {
     fn default() -> Self {
+        Self::from_appearance(&Appearance::default())
+    }
+}
+
+impl RefreshPolicy {
+    pub fn from_appearance(appearance: &Appearance) -> Self {
         Self {
-            selected_pane: Duration::from_millis(300),
+            selected_pane: Duration::from_millis(appearance.number(ACTIVE_REFRESH)),
             selected_session: Duration::from_millis(700),
-            background: Duration::from_millis(1500),
-            max_captures: 4,
+            background: Duration::from_millis(appearance.number(PANE_REFRESH)),
+            max_captures: appearance.number(MAX_CAPTURES) as usize,
         }
     }
 }
