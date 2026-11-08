@@ -10,7 +10,7 @@ use crate::{
     appearance::{FIELDS, LANGUAGE, Language, POPUP_BACKGROUND, POPUP_BORDER, Page, parse_color},
     grid::{FIELD_NAMES, Limits, Settings, Viewport},
     model::{AgentStatus, App, Focus, PanePreview, Session, WindowPreview, WorkspaceDialog},
-    preview::PreviewCache,
+    preview::{PreviewCache, PreviewView},
 };
 
 pub const MIN_CARD_WIDTH: u16 = 32;
@@ -873,29 +873,18 @@ fn render_pane(frame: &mut Frame<'_>, pane: &PanePreview, cache: &PreviewCache, 
         _ => Color::Gray,
     };
     let label = format!("{} {}", pane.id, pane.command);
-    let mut lines = vec![Line::styled(label, Style::default().fg(color))];
-    if area.width >= 15
+    frame.render_widget(Line::styled(label, Style::default().fg(color)), area);
+    if let Some(preview) = preview
+        && area.width >= 15
         && area.height >= 3
-        && let Some(preview) = preview
     {
-        let max_lines = if area.width >= 30 && area.height >= 6 {
-            5
-        } else {
-            2
-        };
-        let count = usize::from((area.height - 1).min(max_lines));
-        let end = preview
-            .lines
-            .iter()
-            .rposition(|line| !line.trim().is_empty())
-            .map_or(0, |row| row + 1);
-        lines.extend(
-            preview.lines[end.saturating_sub(count)..end]
-                .iter()
-                .map(|line| ansi_to_line(&truncate_ansi(line, usize::from(area.width)))),
+        let rows = preview.rendered(area.width, area.height, PreviewView::Thumbnail);
+        render_preview_rows(
+            frame,
+            &rows,
+            Rect::new(area.x, area.y + 1, area.width, area.height - 1),
         );
     }
-    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_pane_screen(
@@ -916,19 +905,17 @@ fn render_pane_screen(
         );
         return;
     }
-    let mut rows = vec![""; usize::from(area.height)];
-    let source_height = preview.lines.len().max(1);
-    for (index, line) in preview.lines.iter().enumerate() {
-        let row = index * rows.len() / source_height;
-        if !line.trim().is_empty() && (rows[row].is_empty() || row >= rows.len() / 2) {
-            rows[row] = line;
-        }
+    let rows = preview.rendered(area.width, area.height, PreviewView::Screen);
+    render_preview_rows(frame, &rows, area);
+}
+
+fn render_preview_rows(frame: &mut Frame<'_>, lines: &[Line<'static>], area: Rect) {
+    for (offset, line) in lines.iter().enumerate() {
+        frame.render_widget(
+            line,
+            Rect::new(area.x, area.y + offset as u16, area.width, 1),
+        );
     }
-    let lines: Vec<_> = rows
-        .into_iter()
-        .map(|line| ansi_to_line(&truncate_ansi(line, usize::from(area.width))))
-        .collect();
-    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_split_dividers(frame: &mut Frame<'_>, panes: &[(&PanePreview, Rect)]) {
@@ -1021,175 +1008,7 @@ fn render_centered_message(frame: &mut Frame<'_>, area: Rect, message: &str) {
 }
 
 fn truncate(value: &str, max_width: usize) -> String {
-    if max_width == 0 {
-        return String::new();
-    }
-
-    let mut output = String::new();
-    for ch in value.chars().take(max_width) {
-        output.push(ch);
-    }
-    output
-}
-
-fn truncate_ansi(value: &str, max_width: usize) -> String {
-    if max_width == 0 {
-        return String::new();
-    }
-
-    let mut output = String::new();
-    let mut visible_width = 0;
-    let mut chars = value.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-            output.push(ch);
-            output.push(chars.next().unwrap());
-            for next in chars.by_ref() {
-                output.push(next);
-                if ('@'..='~').contains(&next) {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        if visible_width == max_width {
-            break;
-        }
-
-        output.push(ch);
-        visible_width += 1;
-    }
-
-    output
-}
-
-fn ansi_to_line(value: &str) -> Line<'static> {
-    let mut spans = Vec::new();
-    let mut buffer = String::new();
-    let mut style = Style::default();
-    let mut chars = value.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-            chars.next();
-            let mut sequence = String::new();
-            let mut is_sgr = false;
-            for next in chars.by_ref() {
-                if next == 'm' {
-                    is_sgr = true;
-                    break;
-                }
-                if ('@'..='~').contains(&next) {
-                    break;
-                }
-                sequence.push(next);
-            }
-
-            if is_sgr {
-                flush_span(&mut spans, &mut buffer, style);
-                apply_sgr(&sequence, &mut style);
-            }
-        } else {
-            buffer.push(ch);
-        }
-    }
-
-    flush_span(&mut spans, &mut buffer, style);
-    Line::from(spans)
-}
-
-fn flush_span(spans: &mut Vec<Span<'static>>, buffer: &mut String, style: Style) {
-    if !buffer.is_empty() {
-        spans.push(Span::styled(std::mem::take(buffer), style));
-    }
-}
-
-fn apply_sgr(sequence: &str, style: &mut Style) {
-    let params: Vec<u16> = if sequence.is_empty() {
-        vec![0]
-    } else {
-        sequence
-            .split(';')
-            .map(|part| part.parse::<u16>().unwrap_or(0))
-            .collect()
-    };
-    let mut index = 0;
-
-    while index < params.len() {
-        match params[index] {
-            0 => *style = Style::default(),
-            1 => *style = style.add_modifier(Modifier::BOLD),
-            3 => *style = style.add_modifier(Modifier::ITALIC),
-            4 => *style = style.add_modifier(Modifier::UNDERLINED),
-            22 => *style = style.remove_modifier(Modifier::BOLD),
-            23 => *style = style.remove_modifier(Modifier::ITALIC),
-            24 => *style = style.remove_modifier(Modifier::UNDERLINED),
-            30..=37 => *style = style.fg(ansi_color(params[index] - 30, false)),
-            39 => style.fg = None,
-            40..=47 => *style = style.bg(ansi_color(params[index] - 40, false)),
-            49 => style.bg = None,
-            90..=97 => *style = style.fg(ansi_color(params[index] - 90, true)),
-            100..=107 => *style = style.bg(ansi_color(params[index] - 100, true)),
-            38 | 48 => {
-                let is_fg = params[index] == 38;
-                if params.get(index + 1) == Some(&5) {
-                    if let Some(color) = params
-                        .get(index + 2)
-                        .and_then(|value| u8::try_from(*value).ok())
-                    {
-                        if is_fg {
-                            *style = style.fg(Color::Indexed(color));
-                        } else {
-                            *style = style.bg(Color::Indexed(color));
-                        }
-                    }
-                    index += 2;
-                } else if params.get(index + 1) == Some(&2) {
-                    let rgb = params.get(index + 2..index + 5).and_then(|values| {
-                        values
-                            .iter()
-                            .map(|value| u8::try_from(*value).ok())
-                            .collect::<Option<Vec<_>>>()
-                    });
-                    if let Some(rgb) = rgb {
-                        let color = Color::Rgb(rgb[0], rgb[1], rgb[2]);
-                        if is_fg {
-                            *style = style.fg(color);
-                        } else {
-                            *style = style.bg(color);
-                        }
-                    }
-                    index += 4;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-}
-
-fn ansi_color(index: u16, bright: bool) -> Color {
-    match (index, bright) {
-        (0, false) => Color::Black,
-        (1, false) => Color::Red,
-        (2, false) => Color::Green,
-        (3, false) => Color::Yellow,
-        (4, false) => Color::Blue,
-        (5, false) => Color::Magenta,
-        (6, false) => Color::Cyan,
-        (7, false) => Color::Gray,
-        (0, true) => Color::DarkGray,
-        (1, true) => Color::LightRed,
-        (2, true) => Color::LightGreen,
-        (3, true) => Color::LightYellow,
-        (4, true) => Color::LightBlue,
-        (5, true) => Color::LightMagenta,
-        (6, true) => Color::LightCyan,
-        (7, true) => Color::White,
-        _ => Color::Reset,
-    }
+    value.chars().take(max_width).collect()
 }
 
 #[cfg(test)]
@@ -1388,25 +1207,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn ansi_foreground_colors_become_styled_spans() {
-        let line = ansi_to_line("plain \u{1b}[31mred\u{1b}[0m done");
-
-        assert_eq!(line.spans.len(), 3);
-        assert_eq!(line.spans[0].content, "plain ");
-        assert_eq!(line.spans[0].style.fg, None);
-        assert_eq!(line.spans[1].content, "red");
-        assert_eq!(line.spans[1].style.fg, Some(Color::Red));
-        assert_eq!(line.spans[2].content, " done");
-        assert_eq!(line.spans[2].style.fg, None);
-    }
-
-    #[test]
-    fn ansi_truncation_counts_only_visible_characters() {
-        let truncated = truncate_ansi("\u{1b}[31mred\u{1b}[0m plain", 5);
-
-        assert_eq!(truncated, "\u{1b}[31mred\u{1b}[0m p");
-    }
     #[test]
     fn workspace_layout_scales_splits_inside_each_window() {
         let mut session = test_session("work");

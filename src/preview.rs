@@ -1,7 +1,13 @@
 use std::{
+    cell::{Ref, RefCell},
     collections::{HashMap, HashSet},
     thread,
     time::{Duration, Instant},
+};
+
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
 };
 
 use crate::{model::Session, tmux::capture_pane_preview};
@@ -29,6 +35,82 @@ pub struct CachedPreview {
     pub lines: Vec<String>,
     pub failed: bool,
     attempted_at: Instant,
+    rendered: [RefCell<Option<RenderedPreview>>; 2],
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PreviewView {
+    Thumbnail,
+    Screen,
+}
+
+struct RenderedPreview {
+    width: u16,
+    height: u16,
+    lines: Vec<Line<'static>>,
+}
+
+impl CachedPreview {
+    pub(crate) fn rendered(
+        &self,
+        width: u16,
+        height: u16,
+        view: PreviewView,
+    ) -> Ref<'_, [Line<'static>]> {
+        let cache = &self.rendered[match view {
+            PreviewView::Thumbnail => 0,
+            PreviewView::Screen => 1,
+        }];
+        if !cache
+            .borrow()
+            .as_ref()
+            .is_some_and(|entry| entry.width == width && entry.height == height)
+        {
+            let lines = self.preview_rows(width, height, view);
+            cache.replace(Some(RenderedPreview {
+                width,
+                height,
+                lines,
+            }));
+        }
+        Ref::map(cache.borrow(), |entry| {
+            entry.as_ref().unwrap().lines.as_slice()
+        })
+    }
+
+    fn preview_rows(&self, width: u16, height: u16, view: PreviewView) -> Vec<Line<'static>> {
+        let rows = match view {
+            PreviewView::Thumbnail => {
+                let limit = if width >= 30 && height >= 6 { 5 } else { 2 };
+                let count = usize::from(height.saturating_sub(1).min(limit));
+                let end = self
+                    .lines
+                    .iter()
+                    .rposition(|line| !line.trim().is_empty())
+                    .map_or(0, |index| index + 1);
+                self.lines[end.saturating_sub(count)..end]
+                    .iter()
+                    .map(String::as_str)
+                    .collect()
+            }
+            PreviewView::Screen => {
+                let height = usize::from(height);
+                let mut rows = vec![""; height];
+                if height != 0 {
+                    for (index, line) in self.lines.iter().enumerate() {
+                        let row = index * height / self.lines.len();
+                        if !line.trim().is_empty() && (rows[row].is_empty() || row >= height / 2) {
+                            rows[row] = line;
+                        }
+                    }
+                }
+                rows
+            }
+        };
+        rows.into_iter()
+            .map(|line| ansi_to_line(&truncate_ansi(line, usize::from(width))))
+            .collect()
+    }
 }
 
 #[derive(Default)]
@@ -123,24 +205,20 @@ impl PreviewCache {
     }
 
     fn record(&mut self, id: String, now: Instant, result: anyhow::Result<Vec<String>>) {
-        let (lines, failed) = match result {
-            Ok(lines) => (lines, false),
-            Err(_) => {
-                let previous = self.by_pane.remove(&id);
-                (
-                    previous.map_or_else(Vec::new, |preview| preview.lines),
-                    true,
-                )
-            }
-        };
-        self.by_pane.insert(
-            id,
-            CachedPreview {
-                lines,
-                failed,
-                attempted_at: now,
-            },
-        );
+        let preview = self.by_pane.entry(id).or_insert_with(|| CachedPreview {
+            lines: Vec::new(),
+            failed: false,
+            attempted_at: now,
+            rendered: Default::default(),
+        });
+        preview.attempted_at = now;
+        preview.failed = result.is_err();
+        if let Ok(lines) = result
+            && lines != preview.lines
+        {
+            preview.lines = lines;
+            preview.rendered = Default::default();
+        }
     }
 }
 
@@ -151,11 +229,191 @@ fn pane_ids(session: &Session) -> impl Iterator<Item = &str> {
         .flat_map(|window| window.panes.iter().map(|pane| pane.id.as_str()))
 }
 
+fn truncate_ansi(value: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+
+    let mut output = String::new();
+    let mut visible_width = 0;
+    let mut chars = value.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            output.push(ch);
+            output.push(chars.next().unwrap());
+            for next in chars.by_ref() {
+                output.push(next);
+                if ('@'..='~').contains(&next) {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if visible_width == max_width {
+            break;
+        }
+
+        output.push(ch);
+        visible_width += 1;
+    }
+
+    output
+}
+
+fn ansi_to_line(value: &str) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut buffer = String::new();
+    let mut style = Style::default();
+    let mut chars = value.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            let mut sequence = String::new();
+            let mut is_sgr = false;
+            for next in chars.by_ref() {
+                if next == 'm' {
+                    is_sgr = true;
+                    break;
+                }
+                if ('@'..='~').contains(&next) {
+                    break;
+                }
+                sequence.push(next);
+            }
+
+            if is_sgr {
+                flush_span(&mut spans, &mut buffer, style);
+                apply_sgr(&sequence, &mut style);
+            }
+        } else {
+            buffer.push(ch);
+        }
+    }
+
+    flush_span(&mut spans, &mut buffer, style);
+    Line::from(spans)
+}
+
+fn flush_span(spans: &mut Vec<Span<'static>>, buffer: &mut String, style: Style) {
+    if !buffer.is_empty() {
+        spans.push(Span::styled(std::mem::take(buffer), style));
+    }
+}
+
+fn apply_sgr(sequence: &str, style: &mut Style) {
+    let params: Vec<u16> = if sequence.is_empty() {
+        vec![0]
+    } else {
+        sequence
+            .split(';')
+            .map(|part| part.parse::<u16>().unwrap_or(0))
+            .collect()
+    };
+    let mut index = 0;
+
+    while index < params.len() {
+        match params[index] {
+            0 => *style = Style::default(),
+            1 => *style = style.add_modifier(Modifier::BOLD),
+            3 => *style = style.add_modifier(Modifier::ITALIC),
+            4 => *style = style.add_modifier(Modifier::UNDERLINED),
+            22 => *style = style.remove_modifier(Modifier::BOLD),
+            23 => *style = style.remove_modifier(Modifier::ITALIC),
+            24 => *style = style.remove_modifier(Modifier::UNDERLINED),
+            30..=37 => *style = style.fg(ansi_color(params[index] - 30, false)),
+            39 => style.fg = None,
+            40..=47 => *style = style.bg(ansi_color(params[index] - 40, false)),
+            49 => style.bg = None,
+            90..=97 => *style = style.fg(ansi_color(params[index] - 90, true)),
+            100..=107 => *style = style.bg(ansi_color(params[index] - 100, true)),
+            38 | 48 => {
+                let is_fg = params[index] == 38;
+                if params.get(index + 1) == Some(&5) {
+                    if let Some(color) = params
+                        .get(index + 2)
+                        .and_then(|value| u8::try_from(*value).ok())
+                    {
+                        if is_fg {
+                            *style = style.fg(Color::Indexed(color));
+                        } else {
+                            *style = style.bg(Color::Indexed(color));
+                        }
+                    }
+                    index += 2;
+                } else if params.get(index + 1) == Some(&2) {
+                    let rgb = params.get(index + 2..index + 5).and_then(|values| {
+                        values
+                            .iter()
+                            .map(|value| u8::try_from(*value).ok())
+                            .collect::<Option<Vec<_>>>()
+                    });
+                    if let Some(rgb) = rgb {
+                        let color = Color::Rgb(rgb[0], rgb[1], rgb[2]);
+                        if is_fg {
+                            *style = style.fg(color);
+                        } else {
+                            *style = style.bg(color);
+                        }
+                    }
+                    index += 4;
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+}
+
+fn ansi_color(index: u16, bright: bool) -> Color {
+    match (index, bright) {
+        (0, false) => Color::Black,
+        (1, false) => Color::Red,
+        (2, false) => Color::Green,
+        (3, false) => Color::Yellow,
+        (4, false) => Color::Blue,
+        (5, false) => Color::Magenta,
+        (6, false) => Color::Cyan,
+        (7, false) => Color::Gray,
+        (0, true) => Color::DarkGray,
+        (1, true) => Color::LightRed,
+        (2, true) => Color::LightGreen,
+        (3, true) => Color::LightYellow,
+        (4, true) => Color::LightBlue,
+        (5, true) => Color::LightMagenta,
+        (6, true) => Color::LightCyan,
+        (7, true) => Color::White,
+        _ => Color::Reset,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{PanePreview, WindowPreview};
     use crate::tmux::parse_sessions;
+
+    #[test]
+    fn ansi_foreground_colors_become_styled_spans() {
+        let line = ansi_to_line("plain \u{1b}[31mred\u{1b}[0m done");
+
+        assert_eq!(line.spans.len(), 3);
+        assert_eq!(line.spans[0].content, "plain ");
+        assert_eq!(line.spans[0].style.fg, None);
+        assert_eq!(line.spans[1].content, "red");
+        assert_eq!(line.spans[1].style.fg, Some(Color::Red));
+        assert_eq!(line.spans[2].content, " done");
+        assert_eq!(line.spans[2].style.fg, None);
+    }
+
+    #[test]
+    fn ansi_truncation_counts_only_visible_characters() {
+        let truncated = truncate_ansi("\u{1b}[31mred\u{1b}[0m plain", 5);
+
+        assert_eq!(truncated, "\u{1b}[31mred\u{1b}[0m p");
+    }
 
     fn sessions() -> Vec<Session> {
         let mut sessions = parse_sessions("$1:dev:0:1:0:0\n$2:ops:0:1:0:0\n");
@@ -238,6 +496,38 @@ mod tests {
         let preview = cache.get("%2").unwrap();
         assert_eq!(preview.lines, ["recovered"]);
         assert!(!preview.failed);
+    }
+
+    #[test]
+    fn rendered_preview_survives_failed_captures_and_updates_on_content_change() {
+        let mut cache = PreviewCache::default();
+        let now = Instant::now();
+        cache.record("%2".into(), now, Ok(vec!["\u{1b}[31mabcdef".into()]));
+        let preview = cache.get("%2").unwrap();
+        let rows = preview.rendered(3, 1, PreviewView::Screen);
+        assert_eq!(rows[0].spans[0].content, "abc");
+        assert_eq!(rows[0].spans[0].style.fg, Some(Color::Red));
+        assert_eq!(
+            rows.as_ptr(),
+            preview.rendered(3, 1, PreviewView::Screen).as_ptr()
+        );
+        let cached = rows.as_ptr();
+        drop(rows);
+
+        cache.record("%2".into(), now, Err(anyhow::anyhow!("pane unavailable")));
+        let preview = cache.get("%2").unwrap();
+        assert_eq!(cached, preview.rendered(3, 1, PreviewView::Screen).as_ptr());
+        assert_eq!(
+            preview.rendered(5, 1, PreviewView::Screen)[0].spans[0].content,
+            "abcde"
+        );
+
+        cache.record("%2".into(), now, Ok(vec!["new".into()]));
+        let preview = cache.get("%2").unwrap();
+        assert_eq!(
+            preview.rendered(5, 1, PreviewView::Screen)[0].spans[0].content,
+            "new"
+        );
     }
 
     #[test]
